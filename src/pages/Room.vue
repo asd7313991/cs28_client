@@ -1,4 +1,7 @@
 <template>
+  <!-- 预热用音频节点（隐藏） -->
+  <audio ref="dingEl" :src="dingUrl" preload="auto" hidden></audio>
+
   <div class="page">
     <!-- 顶部导航（渐变蓝） -->
     <div class="topbar">
@@ -80,7 +83,6 @@
       </transition>
     </div>
 
-
     <!-- 聊天区 -->
     <div class="section-title">聊天室</div>
     <div class="chat-main">
@@ -123,11 +125,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+/** —— Imports（合并去重） —— */
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { Toast } from 'tdesign-mobile-vue'
-// 如果你的项目里 t-icon 不是全局注册，请在 main 中做全局注册；此处模板继续使用 <t-icon />
-
 import ChatList from '@/components/ChatList.vue'
 import QuickBetDrawer from '@/components/QuickBetDrawer.vue'
 import { parseQuickBet } from '@/utils/quickbet'
@@ -135,10 +136,10 @@ import type { QuickBetItem } from '@/utils/quickbet'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 
-// ---------- 展开/收起 ----------
+/** —— 展开/收起 —— */
 const showHistory = ref(false)
 
-// ---------- 历史记录 ----------
+/** —— 历史记录 —— */
 type HistoryRow = {
   issue: number
   time: string
@@ -147,20 +148,8 @@ type HistoryRow = {
   label: string
 }
 const history = ref<HistoryRow[]>([])
-
-// 点击期号/查看更多（现在先占位）
-function goIssue(issue: number) {
-  // TODO: 接服务端后跳到具体期号详情
-  // 例如：router.push({ name: 'issue-detail', params: { issue } })
-  Toast.info(`期号 ${issue}（待接入）`)
-}
-
-function onMoreHistory() {
-  // TODO: 接服务端后打开历史列表页
-  // 例如：router.push({ name: 'issue-history' })
-  Toast.info('更多历史（待接入）')
-}
-
+function goIssue(issue: number) { Toast.info(`期号 ${issue}（待接入）`) }
+function onMoreHistory() { Toast.info('更多历史（待接入）') }
 
 function composeLabel(sum: number) {
   const size = sum >= 14 ? '大' : '小'
@@ -174,18 +163,16 @@ function upsertHistory(issueNum: number, a: number, b: number, c: number, sum: n
   if (history.value.length > 50) history.value.length = 50
 }
 
-// ---------- 顶部返回（如不需要可忽略） ----------
+/** —— 顶部返回 —— */
 const router = useRouter()
 function goBack() { router.back() }
 
-// ---------- 页面基础状态（演示） ----------
+/** —— 页面基础状态 —— */
 const onlineCount = ref(1556)
 const balance = ref(18888.88)
 
-// ---------- 【开奖采集：JND28】 ----------
-// 原：const FEED_URL = '/lotto/data/last/jnd28.json'
+/** —— 开奖采集（JND28） —— */
 const FEED_URL = `${import.meta.env.VITE_LOTTO_PREFIX}/data/last/jnd28.json`
-
 const PERIOD_MS = 210_000 // 3 分半
 const SEAL_MS = 15_000    // 封盘 15s
 
@@ -195,8 +182,7 @@ const lastB = ref(0)
 const lastC = ref(0)
 const lastSum = computed(() => lastA.value + lastB.value + lastC.value)
 const lastLabel = ref('')
-// [新增] 记录已播报的期号，避免重复播报
-const lastAnnouncedIssue = ref<number | null>(null)
+const lastAnnouncedIssue = ref<number | null>(null) // 同一期只播一次
 const currentIssue = computed(() => (lastIssue.value ?? 0) + 1)
 
 const nextOpenAt = ref<number>(Date.now() + PERIOD_MS)
@@ -213,6 +199,27 @@ function parseBalls(v?: string) {
   if (!v) return [0,0,0]
   const s = v.replace(/\+/g, ',').split(',').map(x => Number(x.trim()))
   return [s[0]||0, s[1]||0, s[2]||0]
+}
+
+/** —— 音频（解锁 + 播放） —— */
+const dingUrl = new URL('@/assets/mp3/ding.mp3', import.meta.url).href
+const dingEl = ref<HTMLAudioElement | null>(null)
+
+function unlockAudio() {
+  if (!dingEl.value) return
+  dingEl.value.play().then(() => {
+    dingEl.value?.pause()
+    dingEl.value!.currentTime = 0
+    // console.log('音频已解锁')
+  }).catch(() => {
+    /* 忽略：用户未允许前会报错，等待下一次交互 */
+  })
+}
+
+function playDing() {
+  dingEl.value?.play().catch(err => {
+    console.warn('音频播放失败:', err)
+  })
 }
 
 async function fetchLatest() {
@@ -236,7 +243,7 @@ async function fetchLatest() {
       (Number(data.draw_time) ? Number(data.draw_time) * 1000 : 0) ||
       new Date(data.opentime || data.time).getTime()
 
-    // 计算下一次开奖时间
+    // 下一次开奖时间
     let nextMs: number
     const now = Date.now()
     if (refMs > now - 1000) {
@@ -251,10 +258,10 @@ async function fetchLatest() {
     nextOpenAt.value = nextMs
     tick()
 
-    // ✅ 将最新一期加入“开奖记录”
+    // 写入历史
     upsertHistory(issueNum, ballA, ballB, ballC, sum, String(data.time || data.opentime || ''))
 
-    // ✅ 推送“机器人开奖播报”消息（同一期只播一次）
+    // 机器人播报（同一期只播一次）+ 播放 ding
     const timeText = String(data.time || data.opentime || new Date().toLocaleString())
     if (issueNum && lastAnnouncedIssue.value !== issueNum) {
       chat.push({
@@ -265,20 +272,20 @@ async function fetchLatest() {
         payload: {
           issue: String(issueNum),
           nums: [ballA, ballB, ballC],
-          sum: sum,
+          sum,
           label: composeLabel(sum),
           openedAt: timeText,
         }
       } as any)
       lastAnnouncedIssue.value = issueNum
+      playDing()
     }
-
   } catch (err) {
     console.warn('[jnd28] fetch error:', err)
   }
 }
 
-// ---------- 定时心跳/拉取 ----------
+/** —— 定时心跳/拉取 —— */
 let tickTimer: number | undefined
 function tick() { timeLeft.value = Math.max(0, nextOpenAt.value - Date.now()) }
 function startTick() { stopTick(); tickTimer = window.setInterval(tick, 1000) as unknown as number }
@@ -290,7 +297,7 @@ function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = und
 
 watch(timeLeft, (v) => { if (v === 0) setTimeout(fetchLatest, 1500) })
 
-// ---------- Store & 聊天 ----------
+/** —— Store & 聊天 —— */
 const auth = useAuthStore()
 const chat = useChatStore()
 const isAuthed = computed(() => auth.isAuthed ?? true)
@@ -298,6 +305,7 @@ const userNick = computed(() => auth.user?.nick || '测试用户')
 const messages = computed(() => chat.messages)
 const hasMore = computed(() => chat.hasMore)
 
+/** —— 历史加载 / 发送 —— */
 const text = ref('')
 function loadMore() {
   const now = Date.now()
@@ -318,7 +326,7 @@ function sendChat() {
   text.value = ''
 }
 
-// ---------- 快投 ----------
+/** —— 快投 —— */
 const showDrawer = ref(false)
 const quickText = ref('')
 const PLAY_TEXT_MAP: Record<string, string> = { DA:'大', X:'小', D:'单', S:'双', JDA:'极大', JX:'极小', DXDS:'大小单双' }
@@ -343,11 +351,28 @@ function submitQuickBet() {
   }
 }
 
-// ---------- 生命周期 ----------
-onMounted(() => { fetchLatest(); startTick(); startPoll() })
-onUnmounted(() => { stopTick(); stopPoll() })
+/** —— 生命周期：统一绑定/解绑 —— */
+function addUnlockListeners() {
+  window.addEventListener('click', unlockAudio, { once: false, passive: true })
+  window.addEventListener('touchstart', unlockAudio, { once: false, passive: true })
+}
+function removeUnlockListeners() {
+  window.removeEventListener('click', unlockAudio)
+  window.removeEventListener('touchstart', unlockAudio)
+}
 
-// ---------- 顶部操作演示 ----------
+onMounted(() => {
+  fetchLatest()
+  startTick()
+  startPoll()
+  addUnlockListeners()
+})
+onUnmounted(() => {
+  stopTick()
+  stopPoll()
+  removeUnlockListeners()
+})
+/** —— 顶部操作 —— */
 function onCredit(){ Toast.info('信用') }
 function onDesk(){ Toast.info('桌投') }
 function onMore(){ Toast.info('更多') }
@@ -420,59 +445,30 @@ function onMore(){ Toast.info('更多') }
 .cd-num { font-weight: 800; letter-spacing: 1px; }
 
 /* 外层定位容器：占位只留结果条本身 */
-.history-wrap {
-  position: relative;
-  margin: 0 12px 8px;  /* 把原来 result-strip 的外边距提到容器上 */
-}
+.history-wrap { position: relative; margin: 0 12px 8px; }
 
 /* 原 result-strip 取消外边距，交给 .history-wrap 控制 */
-.result-strip {
-  margin: 0; /* 原来是 0 12px 8px；现在由 .history-wrap 负责 */
-}
+.result-strip { margin: 0; }
 
 /* 缩小大小单双字体 */
 .result-strip .txt,
-.history-panel .result .txt {
-  font-size: 12px;   /* 默认 14~15px，调小一点 */
-  white-space: nowrap;
-}
+.history-panel .result .txt { font-size: 12px; white-space: nowrap; }
 
 .result-strip .balls,
-.history-panel .result {
-  gap: 4px;   /* 默认 6px，缩小间距 */
-}
-
+.history-panel .result { gap: 4px; }
 
 /* 悬浮覆盖面板：绝对定位到结果条下方 */
 .history-panel.overlay {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% + 6px);
-  width: 100%;             /* 占满整个屏幕宽度 */
-  margin: 0;               /* 去掉原来的 margin */
-  border-radius: 0;         /* 如果想和两边对齐，圆角也去掉 */
-  border-left: none;
-  border-right: none;
-  z-index: 20;
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px);
+  width: 100%; margin: 0; border-radius: 0; border-left: none; border-right: none; z-index: 20;
 }
 
 /* 内部内容可保持你原来的 padding */
 .history-panel .thead,
 .history-panel .row,
-.history-panel .more {
-  padding-left: 12px;
-  padding-right: 12px;
-}
-
-
-/* 如果你想在展开时禁用背后点击，可加一个简易遮罩（可选）
-.history-backdrop {
-  position: fixed; inset: 0; background: rgba(0,0,0,.08); z-index: 19;
-} */
+.history-panel .more { padding-left: 12px; padding-right: 12px; }
 
 /* 展开/收起动效：覆盖层位移+淡入淡出 */
 .slide-enter-active, .slide-leave-active { transition: all .18s ease; }
 .slide-enter-from, .slide-leave-to { transform: translateY(-6px); opacity: 0; }
-
 </style>
