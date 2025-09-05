@@ -8,9 +8,7 @@ const request = axios.create({
 })
 
 request.interceptors.request.use((config) => {
-  // 需要的话在这里注入 Token
-  // const token = localStorage.getItem('token')
-  // if (token) config.headers.Authorization = `Bearer ${token}`
+  // 需要的话可在此注入 token
   return config
 })
 

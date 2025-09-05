@@ -1,0 +1,101 @@
+--- a/src/pages/Room.vue
++++ b/src/pages/Room.vue
+@@ -112,6 +112,7 @@
+ import type { QuickBetItem } from '@/utils/quickbet'
+ import { useAuthStore } from '@/stores/auth'
+ import { useChatStore } from '@/stores/chat'
++import { getLast } from '@/api/lottery'
+ 
+ /* 展开/收起 */
+ const showHistory = ref(false)
+@@ -138,7 +139,7 @@
+ const balance = ref(18888.88)
+ 
+ /* 开奖采集（JND28） */
+-const FEED_URL = `${import.meta.env.VITE_LOTTO_PREFIX}/data/last/jnd28.json`
++const CODE = 'jnd28'
+ const PERIOD_MS = 210_000
+ const SEAL_MS = 3_000  // ✅ 提前封盘 3 秒
+ 
+@@ -189,24 +190,24 @@
+ /* 拉取最新 */
+ async function fetchLatest() {
+   try {
+-    const res = await fetch(`${FEED_URL}?_=${Date.now()}`, { cache: 'no-store' })
+-    if (!res.ok) throw new Error(`http ${res.status}`)
+-    const data = await res.json() as any
++    const data: any = await getLast(CODE)
+ 
+     const prevIssue = lastIssue.value
+-    const issueNum = Number(data.issue || data.qihao || 0)
++    const issueNum = Number(data.issue_code || 0)
+     lastIssue.value = issueNum
+ 
+-    const [ballA, ballB, ballC] = parseBalls(data.code || data.opennum)
++    const ballA = Number(data.n1 ?? 0)
++    const ballB = Number(data.n2 ?? 0)
++    const ballC = Number(data.n3 ?? 0)
+     lastA.value = ballA; lastB.value = ballB; lastC.value = ballC
+-    const sum = Number(data.sum ?? (ballA + ballB + ballC))
++
++    const sum = Number(data.sum_value ?? (ballA + ballB + ballC))
+     lastLabel.value = composeLabel(sum)
+ 
+-    const refMs =
+-      (Number(data.draw_time) ? Number(data.draw_time) * 1000 : 0) ||
+-      new Date(data.opentime || data.time).getTime()
+-
+-    // 下一次开奖时间
++    // 参考时间：上一期开盘/开奖时间（后端返回 open_time 为字符串）
++    const refMs = data.open_time ? new Date(data.open_time).getTime() : Date.now()
++
++    // 下一次开奖时间推算
+     let nextMs: number
+     const now = Date.now()
+     if (refMs > now - 1000) nextMs = refMs
+@@ -217,33 +218,22 @@
+     nextOpenAt.value = nextMs
+     tick() // 更新一次 timeLeft
+ 
+-    // ✅ 只要首次拿到一条有效结果，就开放下注并启动倒计时
+-    if (!hasLatestResult.value) {
++    // 首次拿到有效结果：开放下注并播放提示音
++    if (!hasLatestResult.value && issueNum > 0) {
+       hasLatestResult.value = true
+-      if (!startedTick.value) {
+-        startTick()
+-        startedTick.value = true
+-      }
+-    }
+-
+-    // 写入历史
+-    upsertHistory(issueNum, ballA, ballB, ballC, sum, String(data.time || data.opentime || ''))
+-
+-    // 机器人播报（按期号去重）+ 提示音
+-    const timeText = String(data.time || data.opentime || new Date().toLocaleString())
+-    if (issueNum && lastAnnouncedIssue.value !== issueNum) {
+-      chat.push({
+-        id: `robot_${issueNum}_${Date.now()}`,
+-        type: 'robot_draw',
+-        nick: 'CS28机器人',
+-        ts: Date.now(),
+-        payload: { issue: String(issueNum), nums: [ballA, ballB, ballC], sum, label: composeLabel(sum), openedAt: timeText }
+-      } as any)
+-      lastAnnouncedIssue.value = issueNum
++      canBet.value = true
+       playDing()
+     }
++
++    // 若新一期产生：插入历史，并清空快投内容
++    if (prevIssue && issueNum && issueNum !== prevIssue) {
++      upsertHistory(prevIssue, lastA.value, lastB.value, lastC.value, sum, data.open_time)
++      quickText.value = ''
++    }
+   } catch (err) {
+-    console.warn('[jnd28] fetch error:', err)
++    console.warn('fetchLatest error:', err)
++  } finally {
++    schedulePull()
+   }
+ }
+ 
