@@ -22,3 +22,7 @@ app.use(router)
 app.use(TDesignMobile)
 
 app.mount('#app')
+
+import { useAuthStore } from '@/app/store/auth'
+const auth = useAuthStore()
+auth.init()

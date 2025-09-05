@@ -5,13 +5,14 @@
   <div class="page">
     <!-- 顶部导航（渐变蓝） -->
     <div class="topbar">
-      <!-- <t-icon name="chevron-left" size="20" @click="goBack" /> -->
+      <t-icon name="chevron-left" size="20" @click="goBack" />  <!-- ✅ 启用返回 -->
       <div class="title">加拿大28【4.2-4.6】</div>
       <div class="actions">
         <div class="online"><t-icon name="usergroup" size="18" /> {{ onlineCount }}</div>
         <t-icon name="more" size="20" />
       </div>
     </div>
+
 
     <!-- 信息行：倒计时/封盘 + 余额 -->
     <div class="info-row">
@@ -110,7 +111,7 @@ import ChatList from '@/shared/components/ChatList.vue'
 import QuickBetDrawer from '@/shared/components/QuickBetDrawer.vue'
 import { parseQuickBet } from '@/shared/utils/quickbet'
 import type { QuickBetItem } from '@/shared/utils/quickbet'
-import { useAuthStore } from '@/stores/auth'
+import { useAuthStore } from '@/app/store/auth'
 import { useChatStore } from '@/stores/chat'
 import { getLast, getHistory, type HistoryRow } from '@/features/room/api/lottery'
 import dingMp3 from '@/assets/mp3/ding.mp3'
@@ -136,7 +137,7 @@ function goBack() { router.back() }
 
 /* 页面状态 */
 const onlineCount = ref(1556)
-const balance = ref(18888.88)
+const balance = computed(() => Number(auth.profile?.balance ?? 0))
 
 /* 开奖采集（JND28） */
 const CODE = 'jnd28'
@@ -297,8 +298,8 @@ watch(timeLeft, (v) => {
 /* Store & 聊天 */
 const auth = useAuthStore()
 const chat = useChatStore()
-const isAuthed = computed(() => auth.isAuthed ?? true)
-const userNick = computed(() => auth.user?.nick || '测试用户')
+const isAuthed = computed(() => auth.isLogin) // 是否已登录：看 token
+const userNick = computed(() => auth.profile?.nickname || auth.profile?.username || '游客')
 
 // 避免与 UI 库的 $message 混淆，改名为 chatMessages
 const chatMessages = computed<any[]>(() => chat.messages as any[])
