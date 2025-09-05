@@ -29,17 +29,15 @@
           {{ formatSep(messages[idx].ts) }}
         </div>
 
-        <!-- ✅ 新增：机器人开奖播报卡片 -->
+        <!-- 🟦 机器人开奖结果（使用组件自带头像，避免双头像） -->
         <RobotResultCard
-          v-if="m.type === 'robot_draw'"
-          :issue="m.payload.issue"
-          :nums="m.payload.nums"
-          :sum="m.payload.sum"
-          :label="m.payload.label"
-          :openedAt="m.payload.openedAt"
+          v-if="isRobotDraw(m as any)"
+          :avatar="robotAvatarUrl"
+          v-bind="normalizePayload(m as any)"
+          class="robot-bubble"
         />
 
-        <!-- 你原有的消息渲染 -->
+        <!-- 其它消息走普通气泡（原样保留） -->
         <div v-else class="row" :class="{ self: isSelf(m as any) }">
           <!-- 头像（自己消息不显示头像） -->
           <div v-if="!isSelf(m as any)" class="avatar-wrap">
@@ -52,7 +50,7 @@
           <div class="msg-col" :class="{ right: isSelf(m as any) }">
             <div class="meta" :class="{ right: isSelf(m as any) }">
               <span class="nick">{{ (m as any).nick }}</span>
-              <span v-if="(m as any).vip" class="vip-chip">VIP {{(m as any).vip}}</span>
+              <span v-if="(m as any).vip" class="vip-chip">VIP {{ (m as any).vip }}</span>
               <span class="ts">{{ fullTime((m as any).ts) }}</span>
             </div>
 
@@ -81,41 +79,46 @@
 import { ref, watch, nextTick, computed } from 'vue'
 import RobotResultCard from '@/shared/components/chat/RobotResultCard.vue'
 
-
-/** 新增：开奖播报 payload 类型 */
-type RobotDrawPayload = {
+/** GM 开奖播报 payload（规范化后传给卡片） */
+type RobotCardProps = {
   issue: string | number
-  nums: number[]
-  sum: number
+  nums: (string | number)[]
+  sum: string | number
   label: string
   openedAt?: string
 }
 
-/** 修改：消息类型为联合，兼容原有消息与 robot_draw */
-type Msg =
-  | {
-      id: string
-      type?: 'user' | 'bot' | 'system'
-      nick: string
-      content: string
-      ts: number
-      avatar?: string
-      vip?: number
-      self?: boolean
-    }
-  | {
-      id: string
-      type: 'robot_draw'
-      nick: string
-      ts: number
-      payload: RobotDrawPayload
-      avatar?: string
-    }
+/** 基础消息 */
+type BaseMsg = {
+  id: string
+  nick: string
+  ts: number
+  avatar?: string
+  vip?: number
+  self?: boolean
+}
+type UserLikeMsg = BaseMsg & {
+  type?: 'user' | 'bot' | 'system'
+  content: string
+}
+export type RobotDrawMsg = BaseMsg & {
+  type: 'robot_draw'
+  payload: {
+    issue: string | number
+    nums: number[]
+    sum: number
+    label: string
+    openedAt?: string
+  }
+}
+type Msg = UserLikeMsg | RobotDrawMsg
 
 const props = defineProps<{
   messages: Msg[]
   hasMore: boolean
   selfNick?: string
+  /** 可选：机器人头像地址（不传用默认） */
+  robotAvatar?: string
 }>()
 const emit = defineEmits<{ (e: 'loadMore'): void }>()
 
@@ -169,10 +172,7 @@ function isSelf(m: any) {
   return m?.self || (!!props.selfNick && m?.nick === props.selfNick)
 }
 function bubbleClass(m: any) {
-  return {
-    bot: m?.type === 'bot',
-    self: isSelf(m),
-  }
+  return { bot: m?.type === 'bot', self: isSelf(m) }
 }
 
 function onScroll() {
@@ -184,7 +184,6 @@ function onScroll() {
     triggerLoadMore(false)
   }
 }
-
 function triggerLoadMore(fromPull: boolean) {
   if (!wrap.value) return
   loadingMore.value = true
@@ -192,14 +191,12 @@ function triggerLoadMore(fromPull: boolean) {
   if (fromPull) pullDist.value = PULL_THRESHOLD
   emit('loadMore')
 }
-
 watch(
   () => props.messages.length,
   async () => {
     await nextTick()
     const el = wrap.value
     if (!el) return
-
     if (loadingMore.value) {
       const diff = el.scrollHeight - prevHeight
       el.scrollTop = diff
@@ -263,6 +260,64 @@ function formatSep(ts: number) {
   const mm = String(d.getMinutes()).padStart(2, '0')
   return `${y}-${m}-${day} ${hh}:${mm}`
 }
+
+/* ---------------- 机器人开奖识别 + 解析 ---------------- */
+const DRAW_RE_1 =
+  /第\s*(\d{6,10})\s*期(?:[^0-9]|$).*?(\d)\s*[+\+＋]\s*(\d)\s*[+\+＋]\s*(\d)\s*[=＝]\s*(\d{1,2})(?:\s*([大小]))?(?:\s*(单|双))?/i
+const DRAW_RE_2 =
+  /第\s*(\d{6,10})\s*期.*?(?:开|结|果).*?(\d)\s*[+\+＋]\s*(\d)\s*[+\+＋]\s*(\d)\s*[=＝]\s*(\d{1,2})(?:\s*([大小]))?(?:\s*(单|双))?/i
+
+function buildLabel(sum: number, size?: string, oddEven?: string): string {
+  if (sum <= 5) return oddEven ? `极小${oddEven}` : '极小'
+  if (sum >= 22) return oddEven ? `极大${oddEven}` : '极大'
+  const sz = size || (sum >= 14 ? '大' : '小')
+  const oe = oddEven || (sum % 2 === 0 ? '双' : '单')
+  return `${sz}${oe}`
+}
+
+/** 是否为机器人开奖结果消息（结构化或文本匹配） */
+function isRobotDraw(m: any): boolean {
+  if (!m) return false
+  if (m.type === 'robot_draw' && m.payload) return true
+  const maybeBot = m.type === 'bot' || /机器人/i.test(String(m.nick || ''))
+  if (!maybeBot) return false
+  const text = String(m.content ?? '')
+  return DRAW_RE_1.test(text) || DRAW_RE_2.test(text)
+}
+
+/** 规范化为 RobotResultCard 所需 props */
+function normalizePayload(m: any): RobotCardProps {
+  if (m?.payload && m.type === 'robot_draw') {
+    const sumNum = Number(m.payload.sum)
+    return {
+      issue: m.payload.issue,
+      nums: m.payload.nums as (string|number)[],
+      sum: sumNum,
+      label: (m.payload.label && String(m.payload.label)) || buildLabel(sumNum),
+      openedAt: m.payload.openedAt,
+    }
+  }
+  const raw = String(m?.content ?? '').replace(/\s+/g, ' ').trim()
+  const mm = raw.match(DRAW_RE_1) || raw.match(DRAW_RE_2)
+  if (mm) {
+    const issue = mm[1]
+    const n1 = Number(mm[2]), n2 = Number(mm[3]), n3 = Number(mm[4])
+    const sumNum = Number(mm[5])
+    const size = mm[6] as '大'|'小'|undefined
+    const oddEven = mm[7] as '单'|'双'|undefined
+    return {
+      issue,
+      nums: [n1, n2, n3],
+      sum: sumNum,
+      label: buildLabel(sumNum, size, oddEven),
+      openedAt: undefined
+    }
+  }
+  return { issue: '-', nums: [0,0,0], sum: '-', label: '-', openedAt: undefined }
+}
+
+/** 机器人头像（可从 props 覆盖） */
+const robotAvatarUrl = computed(() => props.robotAvatar || '/assets/robot.png')
 </script>
 
 <style scoped>
@@ -317,17 +372,14 @@ function formatSep(ts: number) {
 .avatar.fallback {
   display:flex; align-items:center; justify-content:center;
   background:#e5e7eb; color:#374151; font-weight:700;
-  font-size: 14px;
-  border-radius: 50%;
+  font-size: 14px; border-radius: 50%;
 }
-
 .vip-badge {
   position: absolute; top: -6px; left: -6px;
   padding: 0 6px; height: 18px; line-height: 18px;
   background: linear-gradient(90deg,#f59e0b,#fbbf24);
   color: #111827; font-weight: 800; font-size: 10px;
-  border-radius: 9px;
-  box-shadow: 0 2px 6px rgba(245,158,11,.3);
+  border-radius: 9px; box-shadow: 0 2px 6px rgba(245,158,11,.3);
 }
 
 .msg-col { max-width: 78%; }
@@ -338,18 +390,11 @@ function formatSep(ts: number) {
 }
 .meta.right { justify-content: flex-end; }
 .nick { font-weight: 700; color: #374151; }
-.vip-chip {
-  background: linear-gradient(90deg,#f59e0b,#fbbf24);
-  color: #111827;
-  border-radius: 8px; padding: 0 6px; line-height: 16px;
-  font-size: 11px; font-weight: 800;
-}
+.meta .dot { opacity: .6; }
 
 .bubble {
   position: relative;
-  background: #ffffff;
-  border-radius: 16px;
-  padding: 8px 10px;
+  background: #ffffff; border-radius: 16px; padding: 8px 10px;
   box-shadow: 0 1px 4px rgba(0,0,0,.06);
   word-break: break-word;
 }
@@ -358,16 +403,12 @@ function formatSep(ts: number) {
 
 .tail {
   position: absolute; bottom: 8px; left: -6px;
-  width: 0; height: 0;
-  border: 6px solid transparent;
-  border-right-color: currentColor;
+  width: 0; height: 0; border: 6px solid transparent; border-right-color: currentColor;
   color: #ffffff;
 }
 .bubble.bot .tail { color: #e8f3ff; }
 .bubble.self .tail {
-  left: auto; right: -6px;
-  border: 6px solid transparent;
-  border-left-color: #d7f7c6;
+  left: auto; right: -6px; border: 6px solid transparent; border-left-color: #d7f7c6;
 }
 
 .content { font-size: 14px; line-height: 1.65; }

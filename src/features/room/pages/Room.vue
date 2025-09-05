@@ -69,7 +69,6 @@
     <!-- 聊天区 -->
     <div class="section-title">聊天室</div>
     <div class="chat-main">
-      <!-- 避免 TS 报错，把 messages 改名为 chatMessages -->
       <ChatList :messages="chatMessages" :hasMore="hasMore" :selfNick="userNick" @loadMore="loadMore" />
     </div>
 
@@ -113,13 +112,13 @@ import { parseQuickBet } from '@/shared/utils/quickbet'
 import type { QuickBetItem } from '@/shared/utils/quickbet'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
-import { getLast } from '@/features/room/api/lottery'
+import { getLast, getHistory, type HistoryRow } from '@/features/room/api/lottery'
+import dingMp3 from '@/assets/mp3/ding.mp3'
 
 /* 展开/收起 */
 const showHistory = ref(false)
 
 /* 历史记录 */
-type HistoryRow = { issue: number; time: string; a: number; b: number; c: number; sum: number; label: string }
 const history = ref<HistoryRow[]>([])
 function goIssue(issue: number) { Toast.info(`期号 ${issue}（待接入）`) }
 function onMoreHistory() { Toast.info('更多历史（待接入）') }
@@ -142,27 +141,23 @@ const balance = ref(18888.88)
 /* 开奖采集（JND28） */
 const CODE = 'jnd28'
 const PERIOD_MS = 210_000
-const SEAL_MS = 3_000  // ✅ 提前封盘 3 秒
+const SEAL_MS = 3_000  // 提前封盘 3 秒
 
 const lastIssue = ref<number | null>(null)
 const lastA = ref(0); const lastB = ref(0); const lastC = ref(0)
 const lastSum = computed(() => lastA.value + lastB.value + lastC.value)
 const lastLabel = ref('')
 
-const hasLatestResult = ref(false)   // 是否已经拿到一条有效开奖结果
-const startedTick = ref(false)       // 心跳是否已启动（防重复）
-
+const hasLatestResult = ref(false)   // 是否已拿到至少一条有效开奖结果
 const lastAnnouncedIssue = ref<number | null>(null) // 机器人播报去重
 
 const currentIssue = computed(() => (lastIssue.value ?? 0) + 1)
 
-const nextOpenAt = ref<number>(Date.now() + PERIOD_MS)
+const nextOpenAt = ref<number>(0)
 const timeLeft = ref<number>(0)
 
 const status = computed<'open'|'sealed'>(() => {
-  // 没有拿到任何一条结果 → 一直封盘
   if (!hasLatestResult.value) return 'sealed'
-  // 有结果后，正常按封盘提前 3 秒控制
   return timeLeft.value <= SEAL_MS ? 'sealed' : 'open'
 })
 
@@ -174,20 +169,48 @@ const mmss = computed(() => {
 })
 
 /* 音频（解锁 + 播放） */
-const dingUrl = new URL('@/assets/mp3/ding.mp3', import.meta.url).href
+const dingUrl = dingMp3
 const dingEl = ref<HTMLAudioElement | null>(null)
 function unlockAudio() {
-  if (!dingEl.value) return
-  dingEl.value.play().then(() => { dingEl.value?.pause(); dingEl.value!.currentTime = 0 }).catch(() => {})
+  const el = dingEl.value
+  if (!el) return
+  // 静音播放-暂停-归零，建立用户手势内的播放权限
+  el.muted = true
+  el.currentTime = 0
+  el.play()
+    .then(() => {
+      el.pause()
+      el.muted = false
+      el.currentTime = 0
+    })
+    .catch(() => {/* 忽略一次性失败 */})
 }
-function playDing() { dingEl.value?.play().catch(() => {}) }
+function playDing() {
+  const el = dingEl.value
+  if (!el) return
+  // 允许快速连播：从头开始
+  try {
+    el.pause()
+    el.currentTime = 0
+  } catch {}
+  el.play().catch((err) => {
+    // 如果用户还没触发手势，play 会被拒绝；等手势后再解锁即可
+    console.warn('ding play blocked:', err)
+  })
+}
+
 
 /* 拉取最新 */
 async function fetchLatest() {
   try {
     const data: any = await getLast(CODE)
 
+    // —— 缓存进入函数前的“上一期”数据 —— //
     const prevIssue = lastIssue.value
+    const prevA = lastA.value, prevB = lastB.value, prevC = lastC.value
+    const prevSum = prevA + prevB + prevC
+
+    // —— 当前最新期 —— //
     const issueNum = Number(data.issue_code || 0)
     lastIssue.value = issueNum
 
@@ -199,36 +222,61 @@ async function fetchLatest() {
     const sum = Number(data.sum_value ?? (ballA + ballB + ballC))
     lastLabel.value = composeLabel(sum)
 
-    // 参考时间：上一期开盘/开奖时间（后端返回 open_time 为字符串）
-    const refMs = data.open_time ? new Date(data.open_time).getTime() : Date.now()
-
-    // 下一次开奖时间推算
-    let nextMs: number
-    const now = Date.now()
-    if (refMs > now - 1000) nextMs = refMs
-    else {
-      nextMs = refMs + PERIOD_MS
-      if (nextMs <= now) nextMs = refMs + (Math.floor((now - refMs) / PERIOD_MS) + 1) * PERIOD_MS
-    }
-    nextOpenAt.value = nextMs
-    tick() // 更新一次 timeLeft
-
-    // 首次拿到有效结果：开放下注并播放提示音
+    // 首次拿到任何有效结果 → 解封盘基线
     if (!hasLatestResult.value && issueNum > 0) {
       hasLatestResult.value = true
-      playDing()
     }
 
-    // 若新一期产生：插入历史，并清空快投内容
-    if (prevIssue && issueNum && issueNum !== prevIssue) {
-      upsertHistory(prevIssue, lastA.value, lastB.value, lastC.value, sum, data.open_time)
+    // 本期开奖时间（后端 open_time 为字符串），用于推算下一期开奖时间
+    const refMs = data.open_time ? new Date(data.open_time).getTime() : Date.now()
+
+    // —— 关键逻辑：仅“首条/新一期”才更新下一次开奖时间 & 播报 —— //
+    const isFirstBaseline = !prevIssue && issueNum > 0
+    const isNewIssue = !!prevIssue && issueNum !== prevIssue
+    if (isFirstBaseline || isNewIssue) {
+      // 1) 设置下一次开奖时间并立刻刷新倒计时
+      nextOpenAt.value = refMs + PERIOD_MS
+      tick()
+
+      // 2) 播报（首屏基线也播报一次；去重防抖）
+      if (issueNum && lastAnnouncedIssue.value !== issueNum) {
+        announceLatest(issueNum, ballA, ballB, ballC, sum, lastLabel.value)
+      }
+
+      // 3) 仅“新一期”时，补上上一期到历史
+      if (isNewIssue && prevIssue) {
+        upsertHistory(prevIssue, prevA, prevB, prevC, prevSum, data.open_time)
+      }
+
+      // 4) 清空快投输入
       quickText.value = ''
     }
+
+    // 非首条/非新期：不动 nextOpenAt，保持封盘显示
   } catch (err) {
     console.warn('fetchLatest error:', err)
-  } finally {
-    // 固定轮询由 startPoll 控制，此处不再额外调度
   }
+}
+
+
+
+function announceLatest(issue: number, a: number, b: number, c: number, sum: number, label: string) {
+  if (lastAnnouncedIssue.value === issue) return
+  lastAnnouncedIssue.value = issue
+
+  // 结构化消息（供 ChatList 渲染“蓝底球”样式），并带文本兜底
+  const text = `第 ${issue} 期：${a} + ${b} + ${c} = ${sum} ${label}`
+  chat.push({
+    id: String(Date.now()),
+    type: 'bot',
+    nick: 'CS28机器人',
+    content: text,                 // 兜底
+    kind: 'lottery',               // ✅ 给 ChatList 的“类型提示”
+    payload: { issue, a, b, c, sum, label }, // ✅ 结构化数据
+    ts: Date.now(),
+  } as any)
+
+  playDing()
 }
 
 /* 定时心跳/拉取 */
@@ -238,7 +286,7 @@ function startTick() { stopTick(); tickTimer = window.setInterval(tick, 1000) as
 function stopTick() { if (tickTimer) { clearInterval(tickTimer); tickTimer = undefined } }
 
 let pollTimer: number | undefined
-function startPoll() { stopPoll(); pollTimer = window.setInterval(fetchLatest, 10_000) as unknown as number }
+function startPoll() { stopPoll(); pollTimer = window.setInterval(fetchLatest, 3_000) as unknown as number }
 function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = undefined } }
 
 /** 到点后仍未拿到新结果：继续封盘 & 轮询；不要显示 00:00，因为 status==='sealed' 时顶部文本固定“封盘中” */
@@ -252,7 +300,7 @@ const chat = useChatStore()
 const isAuthed = computed(() => auth.isAuthed ?? true)
 const userNick = computed(() => auth.user?.nick || '测试用户')
 
-// ⚠ 避免与 UI 库的 $message 混淆，改名为 chatMessages
+// 避免与 UI 库的 $message 混淆，改名为 chatMessages
 const chatMessages = computed<any[]>(() => chat.messages as any[])
 const hasMore = computed(() => chat.hasMore)
 
@@ -308,8 +356,13 @@ function removeUnlockListeners() {
   window.removeEventListener('touchstart', unlockAudio)
 }
 
+async function fetchHistoryOnce() {
+  history.value = await getHistory(CODE, 20)
+}
+
 onMounted(() => {
   fetchLatest()            // 首次建立 baseline
+  fetchHistoryOnce()
   startPoll()              // 轮询等待“最新结果”出现
   startTick()              // 启动倒计时心跳
   addUnlockListeners()
@@ -395,7 +448,22 @@ function onMore(){ Toast.info('更多') }
 .result-strip { margin: 0; }
 .result-strip .txt, .history-panel .result .txt { font-size: 12px; white-space: nowrap; }
 .result-strip .balls, .history-panel .result { gap: 4px; }
-.history-panel.overlay { position: absolute; left: 0; right: 0; top: calc(100% + 6px); width: 100%; margin: 0; border-radius: 0; border-left: none; border-right: none; z-index: 20; }
+.history-panel.overlay {
+  position: absolute;
+  left: 0; right: 0; top: calc(100% + 6px);
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  z-index: 30;
+  max-height: 50vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.history-wrap { position: relative; z-index: 30; }
+
 .history-panel .thead, .history-panel .row, .history-panel .more { padding-left: 12px; padding-right: 12px; }
 .slide-enter-active, .slide-leave-active { transition: all .18s ease; }
 .slide-enter-from, .slide-leave-to { transform: translateY(-6px); opacity: 0; }

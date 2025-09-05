@@ -1,0 +1,20 @@
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -13,6 +13,10 @@
+ // ✅ 关键：注册组件库
+ import TDesign from 'tdesign-vue-next'
+ 
++// TDesign Mobile（移动端）样式与插件
++import TDesignMobile from 'tdesign-mobile-vue'
++import 'tdesign-mobile-vue/es/style/index.css'
++
+ // （可选）若你装了中文包：
+ // import zhCN from 'tdesign-vue-next/es/locale/zh_CN'
+ 
+@@ -21,5 +25,6 @@
+ app.use(createPinia())
+ app.use(router)
+ app.use(TDesign /*, { locale: zhCN }*/)
++app.use(TDesignMobile)
+ 
+ app.mount('#app')

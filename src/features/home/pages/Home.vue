@@ -26,27 +26,28 @@
       />
     </div>
 
-    <!-- 3) 四宫格入口（恢复旧版排版） -->
+    <!-- 3) 四宫格入口（移动端：图标 + 文字） -->
     <div class="home-actions">
       <t-grid :column="4" :gutter="10">
         <t-grid-item @click="goRecharge">
-          <template #image><MoneyIcon class="act-icon" /></template>
-          <span class="act-text">我要充值</span>
+          <template #image><t-icon name="wallet" class="act-icon" /></template>
+          <template #text>我要充值</template>
         </t-grid-item>
         <t-grid-item @click="goWithdraw">
-          <template #image><WalletIcon class="act-icon" /></template>
-          <span class="act-text">我要提现</span>
+          <template #image><t-icon name="swap" class="act-icon" /></template>
+          <template #text>我要提现</template>
         </t-grid-item>
         <t-grid-item @click="goDownload">
-          <template #image><DownloadIcon class="act-icon" /></template>
-          <span class="act-text">APP下载</span>
+          <template #image><t-icon name="download" class="act-icon" /></template>
+          <template #text>APP下载</template>
         </t-grid-item>
         <t-grid-item @click="goNotice">
-          <template #image><AppIcon class="act-icon" /></template>
-          <span class="act-text">公告中心</span>
+          <template #image><t-icon name="announcement" class="act-icon" /></template>
+          <template #text>公告中心</template>
         </t-grid-item>
       </t-grid>
     </div>
+
 
 
     <!-- 4) 热门彩种 -->
@@ -80,7 +81,7 @@
 <script setup lang="ts">
 import BottomTabBar from '@/shared/components/BottomTabBar.vue'
 import MarqueeBar from '@/shared/components/MarqueeBar.vue'
-import { MoneyIcon as RechargeIcon, WalletIcon, DownloadIcon, AppIcon ,MegaphoneIcon} from 'tdesign-icons-vue-next'
+
 
 /** 静态 Banner 图 */
 import b1 from '@/assets/banner/1.jpg'
