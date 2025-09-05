@@ -39,7 +39,7 @@ export const useChatStore = defineStore('chat', {
       this.push({
         id: String(now),
         type: 'bot',
-        nick: '鼎尚国际机器人',
+        nick: 'CS28机器人',
         content: text,
         ts: now,
         avatar: '/assets/bot.png', // 自行放一个机器人头像

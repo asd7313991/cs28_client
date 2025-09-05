@@ -29,24 +29,35 @@
           {{ formatSep(messages[idx].ts) }}
         </div>
 
-        <div class="row" :class="{ self: isSelf(m) }">
+        <!-- ✅ 新增：机器人开奖播报卡片 -->
+        <RobotResultCard
+          v-if="m.type === 'robot_draw'"
+          :issue="m.payload.issue"
+          :nums="m.payload.nums"
+          :sum="m.payload.sum"
+          :label="m.payload.label"
+          :openedAt="m.payload.openedAt"
+        />
+
+        <!-- 你原有的消息渲染 -->
+        <div v-else class="row" :class="{ self: isSelf(m as any) }">
           <!-- 头像（自己消息不显示头像） -->
-          <div v-if="!isSelf(m)" class="avatar-wrap">
-            <img v-if="m.avatar" :src="m.avatar" class="avatar" />
-            <div v-else class="avatar fallback">{{ m.nick?.[0] || '友' }}</div>
-            <div v-if="m.vip" class="vip-badge">VIP {{ m.vip }}</div>
+          <div v-if="!isSelf(m as any)" class="avatar-wrap">
+            <img v-if="(m as any).avatar" :src="(m as any).avatar" class="avatar" />
+            <div v-else class="avatar fallback">{{ (m as any).nick?.[0] || '友' }}</div>
+            <div v-if="(m as any).vip" class="vip-badge">VIP {{ (m as any).vip }}</div>
           </div>
 
           <!-- 内容块：昵称+时间（在气泡上方） + 气泡 -->
-          <div class="msg-col" :class="{ right: isSelf(m) }">
-            <div class="meta" :class="{ right: isSelf(m) }">
-              <span class="nick">{{ m.nick }}</span>
-              <span v-if="m.vip" class="vip-chip">VIP {{ m.vip }}</span>
-              <span class="ts">{{ fullTime(m.ts) }}</span>
+          <div class="msg-col" :class="{ right: isSelf(m as any) }">
+            <div class="meta" :class="{ right: isSelf(m as any) }">
+              <span class="nick">{{ (m as any).nick }}</span>
+              <span v-if="(m as any).vip" class="vip-chip">VIP {{(m as any).vip}}</span>
+              <span class="ts">{{ fullTime((m as any).ts) }}</span>
             </div>
 
-            <div class="bubble" :class="bubbleClass(m)">
-              <div class="content">{{ m.content }}</div>
+            <div class="bubble" :class="bubbleClass(m as any)">
+              <div class="content">{{ (m as any).content }}</div>
               <i class="tail" />
             </div>
           </div>
@@ -68,17 +79,37 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick, computed } from 'vue'
+import RobotResultCard from '@/components/chat/RobotResultCard.vue'
 
-type Msg = {
-  id: string
-  type?: 'user' | 'bot' | 'system'
-  nick: string
-  content: string
-  ts: number
-  avatar?: string
-  vip?: number
-  self?: boolean
+/** 新增：开奖播报 payload 类型 */
+type RobotDrawPayload = {
+  issue: string | number
+  nums: number[]
+  sum: number
+  label: string
+  openedAt?: string
 }
+
+/** 修改：消息类型为联合，兼容原有消息与 robot_draw */
+type Msg =
+  | {
+      id: string
+      type?: 'user' | 'bot' | 'system'
+      nick: string
+      content: string
+      ts: number
+      avatar?: string
+      vip?: number
+      self?: boolean
+    }
+  | {
+      id: string
+      type: 'robot_draw'
+      nick: string
+      ts: number
+      payload: RobotDrawPayload
+      avatar?: string
+    }
 
 const props = defineProps<{
   messages: Msg[]
@@ -133,12 +164,12 @@ const innerStyle = computed(() => {
   return `transform: translateY(${y}px); transition: ${pulling.value ? 'none' : 'transform .2s ease'};`
 })
 
-function isSelf(m: Msg) {
-  return m.self || (!!props.selfNick && m.nick === props.selfNick)
+function isSelf(m: any) {
+  return m?.self || (!!props.selfNick && m?.nick === props.selfNick)
 }
-function bubbleClass(m: Msg) {
+function bubbleClass(m: any) {
   return {
-    bot: m.type === 'bot',
+    bot: m?.type === 'bot',
     self: isSelf(m),
   }
 }
@@ -175,7 +206,7 @@ watch(
       pullDist.value = 0
       return
     }
-    const last = props.messages[props.messages.length - 1]
+    const last = props.messages[props.messages.length - 1] as any
     if (atBottom.value || last?.self) {
       el.scrollTop = el.scrollHeight
       unread.value = 0
@@ -213,8 +244,8 @@ function fullTime(ts: number) {
 // 时间分割线策略
 function needTimeSep(idx: number) {
   if (idx === 0) return true
-  const prev = props.messages[idx - 1]?.ts
-  const cur = props.messages[idx]?.ts
+  const prev = (props.messages[idx - 1] as any)?.ts
+  const cur = (props.messages[idx] as any)?.ts
   if (!prev || !cur) return false
   const gap = Math.abs(cur - prev)
   if (gap > 5 * 60 * 1000) return true

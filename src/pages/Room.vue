@@ -195,6 +195,8 @@ const lastB = ref(0)
 const lastC = ref(0)
 const lastSum = computed(() => lastA.value + lastB.value + lastC.value)
 const lastLabel = ref('')
+// [新增] 记录已播报的期号，避免重复播报
+const lastAnnouncedIssue = ref<number | null>(null)
 const currentIssue = computed(() => (lastIssue.value ?? 0) + 1)
 
 const nextOpenAt = ref<number>(Date.now() + PERIOD_MS)
@@ -251,6 +253,26 @@ async function fetchLatest() {
 
     // ✅ 将最新一期加入“开奖记录”
     upsertHistory(issueNum, ballA, ballB, ballC, sum, String(data.time || data.opentime || ''))
+
+    // ✅ 推送“机器人开奖播报”消息（同一期只播一次）
+    const timeText = String(data.time || data.opentime || new Date().toLocaleString())
+    if (issueNum && lastAnnouncedIssue.value !== issueNum) {
+      chat.push({
+        id: `robot_${issueNum}_${Date.now()}`,
+        type: 'robot_draw',
+        nick: 'CS28机器人',
+        ts: Date.now(),
+        payload: {
+          issue: String(issueNum),
+          nums: [ballA, ballB, ballC],
+          sum: sum,
+          label: composeLabel(sum),
+          openedAt: timeText,
+        }
+      } as any)
+      lastAnnouncedIssue.value = issueNum
+    }
+
   } catch (err) {
     console.warn('[jnd28] fetch error:', err)
   }
@@ -313,7 +335,7 @@ function submitQuickBet() {
     if (typeof (chat as any).botAnnounceBet === 'function') {
       ;(chat as any).botAnnounceBet({ nick: userNick.value, bets: betsForBroadcast })
     } else {
-      chat.push({ id: String(Date.now()), type: 'bot', nick: '鼎尚国际机器人', content: `${userNick.value}：${line}`, ts: Date.now() } as any)
+      chat.push({ id: String(Date.now()), type: 'bot', nick: 'CS28机器人', content: `${userNick.value}：${line}`, ts: Date.now() } as any)
     }
     quickText.value = ''
   } catch (e: any) {
