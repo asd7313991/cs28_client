@@ -69,7 +69,8 @@
     <!-- 聊天区 -->
     <div class="section-title">聊天室</div>
     <div class="chat-main">
-      <ChatList :messages="messages" :hasMore="hasMore" :selfNick="userNick" @loadMore="loadMore" />
+      <!-- 避免 TS 报错，把 messages 改名为 chatMessages -->
+      <ChatList :messages="chatMessages" :hasMore="hasMore" :selfNick="userNick" @loadMore="loadMore" />
     </div>
 
     <!-- 底部操作栏 -->
@@ -112,6 +113,7 @@ import { parseQuickBet } from '@/utils/quickbet'
 import type { QuickBetItem } from '@/utils/quickbet'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
+import { getLast } from '@/api/lottery'
 
 /* 展开/收起 */
 const showHistory = ref(false)
@@ -138,7 +140,7 @@ const onlineCount = ref(1556)
 const balance = ref(18888.88)
 
 /* 开奖采集（JND28） */
-const FEED_URL = `${import.meta.env.VITE_LOTTO_PREFIX}/data/last/jnd28.json`
+const CODE = 'jnd28'
 const PERIOD_MS = 210_000
 const SEAL_MS = 3_000  // ✅ 提前封盘 3 秒
 
@@ -171,12 +173,6 @@ const mmss = computed(() => {
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
 })
 
-function parseBalls(v?: string) {
-  if (!v) return [0,0,0]
-  const s = v.replace(/\+/g, ',').split(',').map(x => Number(x.trim()))
-  return [s[0]||0, s[1]||0, s[2]||0]
-}
-
 /* 音频（解锁 + 播放） */
 const dingUrl = new URL('@/assets/mp3/ding.mp3', import.meta.url).href
 const dingEl = ref<HTMLAudioElement | null>(null)
@@ -189,24 +185,24 @@ function playDing() { dingEl.value?.play().catch(() => {}) }
 /* 拉取最新 */
 async function fetchLatest() {
   try {
-    const res = await fetch(`${FEED_URL}?_=${Date.now()}`, { cache: 'no-store' })
-    if (!res.ok) throw new Error(`http ${res.status}`)
-    const data = await res.json() as any
+    const data: any = await getLast(CODE)
 
     const prevIssue = lastIssue.value
-    const issueNum = Number(data.issue || data.qihao || 0)
+    const issueNum = Number(data.issue_code || 0)
     lastIssue.value = issueNum
 
-    const [ballA, ballB, ballC] = parseBalls(data.code || data.opennum)
+    const ballA = Number(data.n1 ?? 0)
+    const ballB = Number(data.n2 ?? 0)
+    const ballC = Number(data.n3 ?? 0)
     lastA.value = ballA; lastB.value = ballB; lastC.value = ballC
-    const sum = Number(data.sum ?? (ballA + ballB + ballC))
+
+    const sum = Number(data.sum_value ?? (ballA + ballB + ballC))
     lastLabel.value = composeLabel(sum)
 
-    const refMs =
-      (Number(data.draw_time) ? Number(data.draw_time) * 1000 : 0) ||
-      new Date(data.opentime || data.time).getTime()
+    // 参考时间：上一期开盘/开奖时间（后端返回 open_time 为字符串）
+    const refMs = data.open_time ? new Date(data.open_time).getTime() : Date.now()
 
-    // 下一次开奖时间
+    // 下一次开奖时间推算
     let nextMs: number
     const now = Date.now()
     if (refMs > now - 1000) nextMs = refMs
@@ -217,33 +213,21 @@ async function fetchLatest() {
     nextOpenAt.value = nextMs
     tick() // 更新一次 timeLeft
 
-    // ✅ 只要首次拿到一条有效结果，就开放下注并启动倒计时
-    if (!hasLatestResult.value) {
+    // 首次拿到有效结果：开放下注并播放提示音
+    if (!hasLatestResult.value && issueNum > 0) {
       hasLatestResult.value = true
-      if (!startedTick.value) {
-        startTick()
-        startedTick.value = true
-      }
-    }
-
-    // 写入历史
-    upsertHistory(issueNum, ballA, ballB, ballC, sum, String(data.time || data.opentime || ''))
-
-    // 机器人播报（按期号去重）+ 提示音
-    const timeText = String(data.time || data.opentime || new Date().toLocaleString())
-    if (issueNum && lastAnnouncedIssue.value !== issueNum) {
-      chat.push({
-        id: `robot_${issueNum}_${Date.now()}`,
-        type: 'robot_draw',
-        nick: 'CS28机器人',
-        ts: Date.now(),
-        payload: { issue: String(issueNum), nums: [ballA, ballB, ballC], sum, label: composeLabel(sum), openedAt: timeText }
-      } as any)
-      lastAnnouncedIssue.value = issueNum
       playDing()
     }
+
+    // 若新一期产生：插入历史，并清空快投内容
+    if (prevIssue && issueNum && issueNum !== prevIssue) {
+      upsertHistory(prevIssue, lastA.value, lastB.value, lastC.value, sum, data.open_time)
+      quickText.value = ''
+    }
   } catch (err) {
-    console.warn('[jnd28] fetch error:', err)
+    console.warn('fetchLatest error:', err)
+  } finally {
+    // 固定轮询由 startPoll 控制，此处不再额外调度
   }
 }
 
@@ -259,7 +243,7 @@ function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = und
 
 /** 到点后仍未拿到新结果：继续封盘 & 轮询；不要显示 00:00，因为 status==='sealed' 时顶部文本固定“封盘中” */
 watch(timeLeft, (v) => {
-  if (v === 0 && canCountdown.value) setTimeout(fetchLatest, 1200)
+  if (v === 0 && hasLatestResult.value) setTimeout(fetchLatest, 1200)
 })
 
 /* Store & 聊天 */
@@ -267,7 +251,9 @@ const auth = useAuthStore()
 const chat = useChatStore()
 const isAuthed = computed(() => auth.isAuthed ?? true)
 const userNick = computed(() => auth.user?.nick || '测试用户')
-const messages = computed(() => chat.messages)
+
+// ⚠ 避免与 UI 库的 $message 混淆，改名为 chatMessages
+const chatMessages = computed<any[]>(() => chat.messages as any[])
 const hasMore = computed(() => chat.hasMore)
 
 /* 历史加载 / 发送 */
@@ -323,8 +309,9 @@ function removeUnlockListeners() {
 }
 
 onMounted(() => {
-  fetchLatest()            // 首次仅建立 baseline，不开放下注
+  fetchLatest()            // 首次建立 baseline
   startPoll()              // 轮询等待“最新结果”出现
+  startTick()              // 启动倒计时心跳
   addUnlockListeners()
 })
 onUnmounted(() => {
