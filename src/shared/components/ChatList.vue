@@ -65,19 +65,32 @@
       <div class="bottom-spacer" />
     </div>
 
-    <!-- 回到底部按钮（带未读） -->
-    <button v-show="showBottomBtn" class="scroll-bottom" @click="scrollToBottom">
-      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-        <path d="M12 16l-6-6h12l-6 6z"></path>
-      </svg>
-      <span v-if="unread>0" class="badge">{{ unread>99?'99+':unread }}</span>
-    </button>
+    <!-- 悬浮回底部（可拖拽） -->
+    <t-badge
+      v-if="showBottomBtn"
+      :count="unread"
+      :max-count="99"
+      :offset="[-6, -6]"
+    >
+      <t-fab
+        v-model:visible="showBottomBtn"
+        :icon="downIcon"
+        draggable="all"
+        :style="{ right: '12px', bottom: '144px' }"  
+        @click="scrollToBottom"
+      />
+    </t-badge>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, nextTick, computed } from 'vue'
 import RobotResultCard from '@/shared/components/chat/RobotResultCard.vue'
+import { h } from 'vue'
+import { ArrowDownIcon } from 'tdesign-icons-vue-next'
+
+const downIcon = () => h(ArrowDownIcon, { size: '20px' })
+
 
 /** GM 开奖播报 payload（规范化后传给卡片） */
 type RobotCardProps = {
@@ -180,9 +193,7 @@ function onScroll() {
   const el = wrap.value
   atBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 10
   showBottomBtn.value = !atBottom.value
-  if (el.scrollTop <= 8 && props.hasMore && !loadingMore.value && !pulling.value) {
-    triggerLoadMore(false)
-  }
+  
 }
 function triggerLoadMore(fromPull: boolean) {
   if (!wrap.value) return

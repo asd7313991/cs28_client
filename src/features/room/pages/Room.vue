@@ -141,7 +141,7 @@ const balance = ref(18888.88)
 /* 开奖采集（JND28） */
 const CODE = 'jnd28'
 const PERIOD_MS = 210_000
-const SEAL_MS = 3_000  // 提前封盘 3 秒
+const SEAL_MS = 1_000  // 提前封盘 1 秒
 
 const lastIssue = ref<number | null>(null)
 const lastA = ref(0); const lastB = ref(0); const lastC = ref(0)
