@@ -1,0 +1,3 @@
+/* 锁住窗口滚动，把滚动交给聊天室容器 */
+html, body, #app { height: 100%; }
+body { margin: 0; overflow-y: hidden; overscroll-behavior-y: none; }

@@ -1,0 +1,11 @@
+{
+  "enable": true,
+  "auth": { "isAuthed": true, "user": { "id": 1, "nick": "测试用户" } },
+  "wallet": { "balance": 18888.88 },
+  "room": {
+    "status": "open",
+    "countdownMs": 120000,
+    "currentIssue": 3331246,
+    "lastIssue": 3331245
+  }
+}
