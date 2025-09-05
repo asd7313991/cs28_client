@@ -79,7 +79,8 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick, computed } from 'vue'
-import RobotResultCard from '@/components/chat/RobotResultCard.vue'
+import RobotResultCard from '@/shared/components/chat/RobotResultCard.vue'
+
 
 /** 新增：开奖播报 payload 类型 */
 type RobotDrawPayload = {

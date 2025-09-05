@@ -1,4 +1,4 @@
-import request from '@/utils/request'
+import request from '@/shared/api/http'
 
 export function getPing() {
   return request.get('/ping')

@@ -1,11 +1,28 @@
 import { createApp } from 'vue'
-import { createPinia } from 'pinia'
 import App from './App.vue'
-import router from './router'
-import TDesign from 'tdesign-mobile-vue'
-import 'tdesign-mobile-vue/es/style/index.css'
-import './styles/theme.css'
-import './styles/base.css'
-import './styles/global.css'
+import router from '@/app/router'
+import { createPinia } from 'pinia'
 
-createApp(App).use(createPinia()).use(router).use(TDesign).mount('#app')
+// 你的全局样式
+import '@/app/styles/reset.css'
+import '@/app/styles/variables.css'
+
+// TDesign 样式（通用）
+import 'tdesign-vue-next/dist/tdesign.css'
+
+// ✅ 关键：注册组件库
+import TDesign from 'tdesign-vue-next'
+
+import TDesignMobile from 'tdesign-mobile-vue'
+import 'tdesign-mobile-vue/es/style/index.css'
+
+// （可选）若你装了中文包：
+// import zhCN from 'tdesign-vue-next/es/locale/zh_CN'
+
+const app = createApp(App)
+
+app.use(createPinia())
+app.use(router)
+app.use(TDesign /*, { locale: zhCN }*/)
+
+app.mount('#app')
