@@ -49,7 +49,7 @@
           </div>
           <div class="row" v-for="r in history" :key="r.issue">
             <div class="issue-link" @click="goIssue(r.issue)">{{ r.issue }}</div>
-            <div class="time">{{ r.time }}</div>
+            <div class="time">{{ formatTime(r.time) }}</div>
             <div class="result">
               <span class="ball">{{ r.a }}</span><span class="plus">+</span>
               <span class="ball">{{ r.b }}</span><span class="plus">+</span>
@@ -70,9 +70,9 @@
 
     <!-- 底部操作栏 -->
     <div class="bottom-bar safe-area-bottom">
-      <button class="bar-item" @click="onCredit"><span class="icon">信</span><span>信用</span></button>
-      <button class="bar-item" @click="showDesk"><span class="icon">桌</span><span>桌投</span></button>
-      <button class="bar-item" @click="showDrawer = true"><span class="icon">快</span><span>快投</span></button>
+      <button class="bar-item" @click="message.info('功能开发中，敬请期待')"><span class="icon">信</span><span>信用</span></button>
+      <button class="bar-item" @click="message.info('功能开发中，敬请期待')"><span class="icon">桌</span><span>桌投</span></button>
+      <button class="bar-item" @click="message.info('功能开发中，敬请期待')"><span class="icon">快</span><span>快投</span></button>
       <button class="bar-item" @click="onMore"><span class="icon">⋯</span><span>更多</span></button>
     </div>
 
@@ -119,12 +119,6 @@ import { message } from '@/shared/composables/useGlobalMessage'
 /* 展开/收起历史 */
 const showHistory = ref(false)
 
-/* 桌投/快投抽屉 */
-const showDesk = () => {
-  message.info('开发中')
-}
-
-
 const showDrawer = ref(false)
 
 const oddsList = ref<any[]>([])
@@ -148,7 +142,7 @@ async function fetchOdds() {
 /* 历史记录 */
 const history = ref<HistoryRow[]>([])
 function goIssue(issue: number) { Toast.info(`期号 ${issue}（待接入）`) }
-function onMoreHistory() { Toast.info('更多历史（待接入）') }
+function onMoreHistory() { message.info('功能开发中，敬请期待') }
 function composeLabel(sum: number) { return `${sum >= 14 ? '大' : '小'}${sum % 2 === 0 ? '双' : '单'}` }
 function upsertHistory(issueNum: number, a: number, b: number, c: number, sum: number, timeText?: string) {
   const t = timeText || new Date().toLocaleString()
@@ -156,6 +150,17 @@ function upsertHistory(issueNum: number, a: number, b: number, c: number, sum: n
   history.value.unshift({ issue: issueNum, a, b, c, sum, label: composeLabel(sum), time: t })
   if (history.value.length > 50) history.value.length = 50
 }
+
+function formatTime(time: string | Date) {
+  const d = typeof time === 'string' ? new Date(time) : time
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  const ss = String(d.getSeconds()).padStart(2, '0')
+  return `${mm}-${dd} ${hh}:${mi}:${ss}`
+}
+
 
 /* 顶部返回 */
 const router = useRouter()
@@ -253,7 +258,7 @@ async function fetchLatest() {
         announceLatest(issueNum, ballA, ballB, ballC, sum, lastLabel.value)
       }
       if (isNewIssue && prevIssue) {
-        upsertHistory(prevIssue, prevA, prevB, prevC, prevSum, data.open_time)
+        upsertHistory(prevIssue, prevA, prevB, prevC, prevSum, formatTime(data.open_time))
       }
       quickText.value = ''
     }
@@ -393,7 +398,7 @@ function onMore(){ Toast.info('更多') }
 .result-strip .toggle { cursor:pointer; opacity:.8; transition:transform .2s ease; }
 .result-strip .toggle.open { transform: rotate(180deg); }
 .history-panel{ margin:0 12px 10px; background:#fff; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,.06); overflow:hidden; }
-.history-panel .thead, .history-panel .row{ display:grid; grid-template-columns:80px 120px 1fr; align-items:center; gap:8px; }
+.history-panel .thead, .history-panel .row{ display:grid; grid-template-columns:70px 90px 1fr; align-items:center; gap:8px; }
 .history-panel .thead{ background:#f7f9fc; color:#374151; font-weight:700; font-size:13px; padding:10px 12px; border-bottom:1px solid #eef2f7; }
 .history-panel .row{ padding:10px 12px; border-bottom:1px solid #f2f4f8; }
 .history-panel .row:last-child{ border-bottom:none; }
