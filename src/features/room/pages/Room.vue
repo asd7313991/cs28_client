@@ -71,7 +71,7 @@
     <!-- 底部操作栏 -->
     <div class="bottom-bar safe-area-bottom">
       <button class="bar-item" @click="onCredit"><span class="icon">信</span><span>信用</span></button>
-      <button class="bar-item" @click="showDesk = true"><span class="icon">桌</span><span>桌投</span></button>
+      <button class="bar-item" @click="showDesk"><span class="icon">桌</span><span>桌投</span></button>
       <button class="bar-item" @click="showDrawer = true"><span class="icon">快</span><span>快投</span></button>
       <button class="bar-item" @click="onMore"><span class="icon">⋯</span><span>更多</span></button>
     </div>
@@ -96,11 +96,7 @@
       </div>
     </QuickBetDrawer>
 
-    <!-- 桌投抽屉 -->
-    <QuickBetDrawer v-model="showDesk">
-      <TableBetPanel v-if="oddsList.length" :items="oddsList" />
-      <div v-else class="loading">加载中...</div>
-    </QuickBetDrawer>
+    
   </div>
 </template>
 
@@ -118,26 +114,37 @@ import { useChatStore } from '@/stores/chat'
 import { getLast, getHistory, type HistoryRow } from '@/features/room/api/lottery'
 import { odds } from '@/features/bet/api'
 import dingMp3 from '@/assets/mp3/ding.mp3'
+import { message } from '@/shared/composables/useGlobalMessage'
 
 /* 展开/收起历史 */
 const showHistory = ref(false)
 
 /* 桌投/快投抽屉 */
-const showDesk = ref(false)
+const showDesk = () => {
+  message.info('开发中')
+}
 
-/* 赔率数据（响应式存储） */
+
+const showDrawer = ref(false)
+
 const oddsList = ref<any[]>([])
 
 async function fetchOdds() {
   try {
+    // ✅ odds() 已经返回数组，不需要解包
     const list = await odds('jnd28')
-    oddsList.value = list.filter(o => o.status === 1).map(o => ({
-      play: o.name, name: o.name, odds: o.odds
-    }))
+    oddsList.value = list
+      .filter((o: any) => o.status === 1)
+      .map((o: any) => ({
+        play: o.name,   // name 作为唯一 key
+        name: o.name,
+        odds: o.odds,
+      }))
   } catch (e) {
     console.warn('fetchOdds error', e)
   }
 }
+
 /* 历史记录 */
 const history = ref<HistoryRow[]>([])
 function goIssue(issue: number) { Toast.info(`期号 ${issue}（待接入）`) }
@@ -156,20 +163,21 @@ function goBack() { router.back() }
 
 /* 页面状态 */
 const onlineCount = ref(1556)
+const auth = useAuthStore()
 const balance = computed(() => Number(auth.profile?.balance ?? 0))
 
-/* 开奖采集（JND28） */
+/* 开奖采集 */
 const CODE = 'jnd28'
 const PERIOD_MS = 210_000
-const SEAL_MS = 1_000  // 提前封盘 1 秒
+const SEAL_MS = 1_000
 
 const lastIssue = ref<number | null>(null)
 const lastA = ref(0); const lastB = ref(0); const lastC = ref(0)
 const lastSum = computed(() => lastA.value + lastB.value + lastC.value)
 const lastLabel = ref('')
 
-const hasLatestResult = ref(false)   // 是否已拿到至少一条有效开奖结果
-const lastAnnouncedIssue = ref<number | null>(null) // 机器人播报去重
+const hasLatestResult = ref(false)
+const lastAnnouncedIssue = ref<number | null>(null)
 
 const currentIssue = computed(() => (lastIssue.value ?? 0) + 1)
 
@@ -188,49 +196,38 @@ const mmss = computed(() => {
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
 })
 
-/* 音频（解锁 + 播放） */
+/* 音频 */
 const dingUrl = dingMp3
 const dingEl = ref<HTMLAudioElement | null>(null)
 function unlockAudio() {
   const el = dingEl.value
   if (!el) return
-  // 静音播放-暂停-归零，建立用户手势内的播放权限
   el.muted = true
   el.currentTime = 0
-  el.play()
-    .then(() => {
-      el.pause()
-      el.muted = false
-      el.currentTime = 0
-    })
-    .catch(() => {/* 忽略一次性失败 */})
+  el.play().then(() => {
+    el.pause()
+    el.muted = false
+    el.currentTime = 0
+  }).catch(() => {})
 }
 function playDing() {
   const el = dingEl.value
   if (!el) return
-  // 允许快速连播：从头开始
   try {
     el.pause()
     el.currentTime = 0
   } catch {}
-  el.play().catch((err) => {
-    // 如果用户还没触发手势，play 会被拒绝；等手势后再解锁即可
-    console.warn('ding play blocked:', err)
-  })
+  el.play().catch(() => {})
 }
-
 
 /* 拉取最新 */
 async function fetchLatest() {
   try {
     const data: any = await getLast(CODE)
-
-    // —— 缓存进入函数前的“上一期”数据 —— //
     const prevIssue = lastIssue.value
     const prevA = lastA.value, prevB = lastB.value, prevC = lastC.value
     const prevSum = prevA + prevB + prevC
 
-    // —— 当前最新期 —— //
     const issueNum = Number(data.issue_code || 0)
     lastIssue.value = issueNum
 
@@ -242,64 +239,46 @@ async function fetchLatest() {
     const sum = Number(data.sum_value ?? (ballA + ballB + ballC))
     lastLabel.value = composeLabel(sum)
 
-    // 首次拿到任何有效结果 → 解封盘基线
     if (!hasLatestResult.value && issueNum > 0) {
       hasLatestResult.value = true
     }
 
-    // 本期开奖时间（后端 open_time 为字符串），用于推算下一期开奖时间
     const refMs = data.open_time ? new Date(data.open_time).getTime() : Date.now()
-
-    // —— 关键逻辑：仅“首条/新一期”才更新下一次开奖时间 & 播报 —— //
     const isFirstBaseline = !prevIssue && issueNum > 0
     const isNewIssue = !!prevIssue && issueNum !== prevIssue
     if (isFirstBaseline || isNewIssue) {
-      // 1) 设置下一次开奖时间并立刻刷新倒计时
       nextOpenAt.value = refMs + PERIOD_MS
       tick()
-
-      // 2) 播报（首屏基线也播报一次；去重防抖）
       if (issueNum && lastAnnouncedIssue.value !== issueNum) {
         announceLatest(issueNum, ballA, ballB, ballC, sum, lastLabel.value)
       }
-
-      // 3) 仅“新一期”时，补上上一期到历史
       if (isNewIssue && prevIssue) {
         upsertHistory(prevIssue, prevA, prevB, prevC, prevSum, data.open_time)
       }
-
-      // 4) 清空快投输入
       quickText.value = ''
     }
-
-    // 非首条/非新期：不动 nextOpenAt，保持封盘显示
   } catch (err) {
     console.warn('fetchLatest error:', err)
   }
 }
 
-
-
 function announceLatest(issue: number, a: number, b: number, c: number, sum: number, label: string) {
   if (lastAnnouncedIssue.value === issue) return
   lastAnnouncedIssue.value = issue
-
-  // 结构化消息（供 ChatList 渲染“蓝底球”样式），并带文本兜底
   const text = `第 ${issue} 期：${a} + ${b} + ${c} = ${sum} ${label}`
   chat.push({
     id: String(Date.now()),
     type: 'bot',
     nick: 'CS28机器人',
-    content: text,                 // 兜底
-    kind: 'lottery',               // ✅ 给 ChatList 的“类型提示”
-    payload: { issue, a, b, c, sum, label }, // ✅ 结构化数据
+    content: text,
+    kind: 'lottery',
+    payload: { issue, a, b, c, sum, label },
     ts: Date.now(),
   } as any)
-
   playDing()
 }
 
-/* 定时心跳/拉取 */
+/* 定时器 */
 let tickTimer: number | undefined
 function tick() { timeLeft.value = Math.max(0, nextOpenAt.value - Date.now()) }
 function startTick() { stopTick(); tickTimer = window.setInterval(tick, 1000) as unknown as number }
@@ -309,22 +288,15 @@ let pollTimer: number | undefined
 function startPoll() { stopPoll(); pollTimer = window.setInterval(fetchLatest, 3_000) as unknown as number }
 function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = undefined } }
 
-/** 到点后仍未拿到新结果：继续封盘 & 轮询；不要显示 00:00，因为 status==='sealed' 时顶部文本固定“封盘中” */
-watch(timeLeft, (v) => {
-  if (v === 0 && hasLatestResult.value) setTimeout(fetchLatest, 1200)
-})
+watch(timeLeft, (v) => { if (v === 0 && hasLatestResult.value) setTimeout(fetchLatest, 1200) })
 
-/* Store & 聊天 */
-const auth = useAuthStore()
+/* 聊天 */
 const chat = useChatStore()
-const isAuthed = computed(() => auth.isLogin) // 是否已登录：看 token
+const isAuthed = computed(() => auth.isLogin)
 const userNick = computed(() => auth.profile?.nickname || auth.profile?.username || '游客')
-
-// 避免与 UI 库的 $message 混淆，改名为 chatMessages
 const chatMessages = computed<any[]>(() => chat.messages as any[])
 const hasMore = computed(() => chat.hasMore)
 
-/* 历史加载 / 发送 */
 const text = ref('')
 function loadMore() {
   const now = Date.now()
@@ -342,10 +314,7 @@ function sendChat() {
 }
 
 /* 快投 */
-const showDrawer = ref(false)
 const quickText = ref('')
-const PLAY_TEXT_MAP: Record<string, string> = { DA:'大', X:'小', D:'单', S:'双', JDA:'极大', JX:'极小', DXDS:'大小单双' }
-function playToLabel(play: string) { return PLAY_TEXT_MAP[play.toUpperCase()] || play }
 function submitQuickBet() {
   if (!isAuthed.value) { Toast.warning('游客模式不可下单'); return }
   if (status.value === 'sealed') { Toast.warning('封盘中禁止下注'); return }
@@ -353,7 +322,7 @@ function submitQuickBet() {
     const raw = parseQuickBet(quickText.value) as QuickBetItem[]
     if (!raw.length) throw new Error('格式不正确')
     Toast.success('已提交下单'); showDrawer.value = false
-    const betsForBroadcast = raw.slice(0, 10).map(b => ({ label: playToLabel(b.play), amount: b.amount }))
+    const betsForBroadcast = raw.slice(0, 10).map(b => ({ label: b.play, amount: b.amount }))
     const line = betsForBroadcast.map(b => `${b.label}${b.amount}`).join('|')
     if (typeof (chat as any).botAnnounceBet === 'function') {
       ;(chat as any).botAnnounceBet({ nick: userNick.value, bets: betsForBroadcast })
@@ -375,17 +344,16 @@ function removeUnlockListeners() {
   window.removeEventListener('click', unlockAudio)
   window.removeEventListener('touchstart', unlockAudio)
 }
-
 async function fetchHistoryOnce() {
   history.value = await getHistory(CODE, 20)
 }
 
 onMounted(() => {
   fetchOdds()
-  fetchLatest()            // 首次建立 baseline
+  fetchLatest()
   fetchHistoryOnce()
-  startPoll()              // 轮询等待“最新结果”出现
-  startTick()              // 启动倒计时心跳
+  startPoll()
+  startTick()
   addUnlockListeners()
 })
 onUnmounted(() => {
@@ -396,18 +364,15 @@ onUnmounted(() => {
 
 /* 顶部操作 */
 function onCredit(){ Toast.info('信用') }
-function onDesk(){ Toast.info('桌投') }
 function onMore(){ Toast.info('更多') }
 </script>
 
 <style scoped>
-/* —— 样式同前，略 —— */
 .page { height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: #edf3ff linear-gradient(180deg,#eef7ff,#f8fbff); padding-bottom: 128px; }
 .topbar { display:flex; align-items:center; justify-content:space-between; padding: 10px 12px; background: linear-gradient(180deg,#35c0ff,#18a0ff); color: #fff; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
 .topbar .title { font-weight: 800; letter-spacing:.5px; }
 .topbar .actions { display:flex; align-items:center; gap:12px; }
 .topbar .online { display:flex; align-items:center; gap:4px; opacity:.95; }
-
 .info-row { display:flex; align-items:center; justify-content:space-between; background:#fff; margin: 8px 12px 10px; padding:10px 12px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.04); }
 .info-row .left { display:flex; align-items:center; gap:8px; color:#111827; }
 .info-row .issue { font-weight: 700; }
@@ -416,7 +381,6 @@ function onMore(){ Toast.info('更多') }
 .info-row .divider { width:1px; height:22px; background:#e5e7eb; margin:0 10px; }
 .info-row .right { color:#374151; }
 .info-row .money { color:#ef4444; font-weight:800; margin-left:6px; }
-
 .result-strip { display:flex; align-items:center; gap:8px; background:#fff; margin:0 12px 8px; padding:8px 10px; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,.04); }
 .result-strip .res { display:grid; grid-template-columns:1fr auto; column-gap:10px; row-gap:4px; align-items:center; width:100%; min-width:0; }
 .result-strip .label { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#374151; font-weight:600; }
@@ -428,7 +392,6 @@ function onMore(){ Toast.info('更多') }
 .result-strip .txt { font-weight:800; }
 .result-strip .toggle { cursor:pointer; opacity:.8; transition:transform .2s ease; }
 .result-strip .toggle.open { transform: rotate(180deg); }
-
 .history-panel{ margin:0 12px 10px; background:#fff; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,.06); overflow:hidden; }
 .history-panel .thead, .history-panel .row{ display:grid; grid-template-columns:80px 120px 1fr; align-items:center; gap:8px; }
 .history-panel .thead{ background:#f7f9fc; color:#374151; font-weight:700; font-size:13px; padding:10px 12px; border-bottom:1px solid #eef2f7; }
@@ -443,16 +406,6 @@ function onMore(){ Toast.info('更多') }
 .history-panel .result .sum{ font-weight:900; }
 .history-panel .result .txt{ font-weight:800; }
 .history-panel .more{ text-align:center; color:#2563eb; padding:10px 12px; border-top:1px solid #eef2f7; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer; }
-
-.slide-enter-active, .slide-leave-active { transition: all .2s ease; }
-.slide-enter-from, .slide-leave-to { transform: translateY(-6px); opacity: 0; }
-
-@media (max-width: 360px) {
-  .history-panel .thead, .history-panel .row { grid-template-columns: 72px 100px 1fr; }
-  .result-strip .res { grid-template-columns: 1fr; }
-  .result-strip .balls { justify-self: start; }
-}
-
 .section-title { margin: 8px 16px 6px; font-weight: 700; color:#111827; }
 .chat-main { flex:1; min-height:0; overflow:hidden; padding: 0 4px; }
 .bottom-bar{ position: fixed; left: 0; right: 0; bottom: 0; height: 56px; background: rgba(255,255,255,.92); backdrop-filter: saturate(140%) blur(6px); border-top: 1px solid #eef2f7; display: grid; grid-template-columns: repeat(4,1fr); z-index: 8; }
@@ -464,28 +417,8 @@ function onMore(){ Toast.info('更多') }
 .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .qb { display:grid; gap:8px; }
 .cd-num { font-weight: 800; letter-spacing: 1px; }
-
 .history-wrap { position: relative; margin: 0 12px 8px; }
 .result-strip { margin: 0; }
-.result-strip .txt, .history-panel .result .txt { font-size: 12px; white-space: nowrap; }
-.result-strip .balls, .history-panel .result { gap: 4px; }
-.history-panel.overlay {
-  position: absolute;
-  left: 0; right: 0; top: calc(100% + 6px);
-  width: 100%;
-  margin: 0;
-  border-radius: 0;
-  border-left: none;
-  border-right: none;
-  z-index: 30;
-  max-height: 50vh;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-}
-.history-wrap { position: relative; z-index: 30; }
-
-.history-panel .thead, .history-panel .row, .history-panel .more { padding-left: 12px; padding-right: 12px; }
-.slide-enter-active, .slide-leave-active { transition: all .18s ease; }
-.slide-enter-from, .slide-leave-to { transform: translateY(-6px); opacity: 0; }
+.history-panel.overlay { position: absolute; left: 0; right: 0; top: calc(100% + 6px); width: 100%; margin: 0; border-radius: 0; border-left: none; border-right: none; z-index: 30; max-height: 50vh; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+:deep(.t-popup) { max-height: 60vh; border-top-left-radius: 12px; border-top-right-radius: 12px; overflow-y: auto; }
 </style>
