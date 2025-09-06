@@ -43,7 +43,7 @@ const auth = useAuthStore()
 const loading = ref(false)
 // ✅ 默认账号密码
 const form = reactive({ 
-  username: 'bjwbaozi@gmail.com',
+  username: 'test',
   password: '123456',
 })
 

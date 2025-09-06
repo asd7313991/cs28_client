@@ -104,14 +104,7 @@ type GameItem = {
   id: number; name: string; period: string; time: string; bg: string; img: string
 }
 const games: GameItem[] = [
-  {
-    id: 201,
-    name: '台湾水果28',
-    period: '5分钟/期',
-    time: '开奖时间：07:05-23:55',
-    bg: 'linear-gradient(135deg,#ffb65b 0%,#ff7f34 100%)',
-    img: 'https://picsum.photos/seed/tw/220/160',
-  },
+
   {
     id: 202,
     name: '加拿大28',
@@ -119,6 +112,14 @@ const games: GameItem[] = [
     time: '开奖时间：20:00-21:00',
     bg: 'linear-gradient(135deg,#ff7aa3 0%,#ff4d6d 100%)',
     img: 'https://picsum.photos/seed/ca/220/160',
+  },
+  {
+    id: 201,
+    name: '台湾水果28',
+    period: '5分钟/期',
+    time: '开奖时间：07:05-23:55',
+    bg: 'linear-gradient(135deg,#ffb65b 0%,#ff7f34 100%)',
+    img: 'https://picsum.photos/seed/tw/220/160',
   },
   {
     id: 203,

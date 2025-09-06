@@ -85,7 +85,6 @@
         @keyup.enter="status!=='sealed' && sendChat()"
       />
       <t-button theme="primary" :disabled="status==='sealed'" @click="sendChat">发送</t-button>
-      <t-button variant="outline" :disabled="status==='sealed'" @click="showDrawer = true">快投</t-button>
     </div>
 
     <!-- 快投抽屉 -->
@@ -112,9 +111,11 @@ import type { QuickBetItem } from '@/shared/utils/quickbet'
 import { useAuthStore } from '@/app/store/auth'
 import { useChatStore } from '@/stores/chat'
 import { getLast, getHistory, type HistoryRow } from '@/features/room/api/lottery'
-import { odds } from '@/features/bet/api'
+import { odds,placeBet } from '@/features/bet/api'
+
 import dingMp3 from '@/assets/mp3/ding.mp3'
 import { message } from '@/shared/composables/useGlobalMessage'
+
 
 /* 展开/收起历史 */
 const showHistory = ref(false)
@@ -311,12 +312,96 @@ function loadMore() {
   }))
   chat.prepend(more as any)
 }
-function sendChat() {
-  if (status.value === 'sealed') return
-  if (!text.value.trim()) return
-  chat.push({ id: String(Date.now()), type: 'user', nick: userNick.value, content: text.value, ts: Date.now(), self: true } as any)
-  text.value = ''
+
+
+// 发送输入框内容（支持快投）
+async function sendChat() {
+  const raw = text.value.trim()
+  if (!raw) return
+
+  // 封盘直接拦截
+  if (status.value === 'sealed') {
+    message.info('封盘中禁止下注')
+    return
+  }
+
+  let itemsParsed: QuickBetItem[] = []
+  try {
+    itemsParsed = parseQuickBet(raw) as QuickBetItem[]
+  } catch (e: any) {
+    const msg = e?.message as string | undefined
+    if (msg) {
+      message.info(msg) // 例如：投注种类过多 / 格式不正确
+      return
+    }
+  }
+
+  // 不是快投 → 走普通聊天
+  if (!itemsParsed.length) {
+    chat.push({
+      id: String(Date.now()),
+      type: 'user',
+      nick: userNick.value,
+      content: raw,
+      ts: Date.now(),
+      self: true,
+    } as any)
+    text.value = ''
+    return
+  }
+
+  // 登录校验
+  if (!isAuthed.value) {
+    message.info('游客模式不可下单')
+    return
+  }
+
+  // 余额友好挡板（后端仍会校验）
+  const total = itemsParsed.reduce((s, it) => s + Number(it.amount || 0), 0)
+  if (Number(balance.value) < total) {
+    message.info('余额不足')
+    return
+  }
+
+  // —— 下单 ——（对齐后端：items[{ play, amount }]）
+  try {
+    await placeBet({
+      code: CODE,
+      issue: String(currentIssue.value),
+      items: itemsParsed.map(it => ({
+        play: it.play,                  // ★ 用 play
+        amount: Number(it.amount),
+      })),
+    })
+
+    message.info('下注成功')
+    // 回显自己发的这条（非必须，仅做可视反馈）
+    const line = itemsParsed.slice(0, 10).map(b => `${b.play}${b.amount}`).join(' ')
+    chat.push({
+      id: String(Date.now()),
+      type: 'user',
+      nick: userNick.value,
+      content: line,
+      ts: Date.now(),
+      self: true,
+    } as any)
+
+    text.value = ''
+
+    // 可选：刷新余额（如果有方法）
+    // await auth.reload?.()
+
+    // 可选：本地系统消息；正式提示由 GM 广播，这里默认不发
+    // chat.push({ id: String(Date.now()), type: 'system', content: `订单已提交：共${total}`, ts: Date.now() } as any)
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail || e?.message || '下单失败'
+    message.info(msg)
+  }
 }
+
+
+
+
 
 /* 快投 */
 const quickText = ref('')
@@ -423,7 +508,7 @@ function onMore(){ Toast.info('更多') }
 .qb { display:grid; gap:8px; }
 .cd-num { font-weight: 800; letter-spacing: 1px; }
 .history-wrap { position: relative; margin: 0 12px 8px; }
-.result-strip { margin: 0; }
+.history-wrap .result-strip { margin: 0; }
 .history-panel.overlay { position: absolute; left: 0; right: 0; top: calc(100% + 6px); width: 100%; margin: 0; border-radius: 0; border-left: none; border-right: none; z-index: 30; max-height: 50vh; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 :deep(.t-popup) { max-height: 60vh; border-top-left-radius: 12px; border-top-right-radius: 12px; overflow-y: auto; }
 </style>
