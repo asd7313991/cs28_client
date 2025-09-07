@@ -67,7 +67,7 @@
 
     <!-- 聊天区 -->
     <div class="section-title">聊天室</div>
-    <div class="chat-main" style="margin-bottom: 70px;">
+    <div class="chat-main" >
       <ChatList :messages="chatMessages" :hasMore="hasMore" :selfNick="userNick" @loadMore="loadMore" />
     </div>
 
@@ -412,7 +412,7 @@ async function sendChat() {
       items: itemsParsed.map(it => ({ play: it.play, amount: Number(it.amount) })),
     })
     message.info('下注成功')
-    const line = itemsParsed.slice(0, 10).map(b => `${b.play}${b.amount}`).join(' ')
+    const line = itemsParsed.slice(0, 10).map(b => `${b.play}`+`*`+`${b.amount}`).join(' ')
     chat.push({ id: String(Date.now()), type: 'user', nick: userNick.value, content: line, ts: Date.now(), self: true } as any)
     text.value = ''
   } catch (e: any) {
@@ -528,5 +528,11 @@ function onMore(){ Toast.info('更多') }
 .history-panel.overlay { position: absolute; left: 0; right: 0; top: calc(100% + 6px); width: 100%; margin: 0; border-radius: 0; border-left: none; border-right: none; z-index: 30; max-height: 50vh; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 :deep(.t-popup) { max-height: 60vh; border-top-left-radius: 12px; border-top-right-radius: 12px; overflow-y: auto; }
 
+
+@supports (-webkit-touch-callout: none) {
+  .chat-main {
+    margin-bottom: 70px;
+  }
+}
 
 </style>
