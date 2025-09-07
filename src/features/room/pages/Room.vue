@@ -18,7 +18,9 @@
       <div class="left">
         <span class="issue">第 {{ currentIssue }} 期开奖</span>
         <span class="dot">|</span>
-        <span class="cd"><span class="cd-num">{{ status==='sealed' ? '封盘中' : mmss }}</span></span>
+        <span class="cd">
+          <span class="cd-num">{{ status === 'sealed' ? '封盘中' : mmss }}</span>
+        </span>
       </div>
       <div class="divider"></div>
       <div class="right">
@@ -47,9 +49,10 @@
           <div class="thead">
             <div>期号</div><div>开奖时间</div><div class="th-result">开奖结果</div>
           </div>
+          <div v-if="!history.length" class="empty">暂无开奖记录</div>
           <div class="row" v-for="r in history" :key="r.issue">
             <div class="issue-link" @click="goIssue(r.issue)">{{ r.issue }}</div>
-            <div class="time">{{ formatTime(r.time) }}</div>
+            <div class="time">{{ r.time }}</div>
             <div class="result">
               <span class="ball">{{ r.a }}</span><span class="plus">+</span>
               <span class="ball">{{ r.b }}</span><span class="plus">+</span>
@@ -94,8 +97,6 @@
         <t-button block theme="primary" :disabled="status==='sealed'" @click="submitQuickBet">确认下单</t-button>
       </div>
     </QuickBetDrawer>
-
-    
   </div>
 </template>
 
@@ -105,63 +106,104 @@ import { useRouter } from 'vue-router'
 import { Toast } from 'tdesign-mobile-vue'
 import ChatList from '@/shared/components/ChatList.vue'
 import QuickBetDrawer from '@/shared/components/QuickBetDrawer.vue'
-import TableBetPanel from '@/shared/components/TableBetPanel.vue'
 import { parseQuickBet } from '@/shared/utils/quickbet'
 import type { QuickBetItem } from '@/shared/utils/quickbet'
 import { useAuthStore } from '@/app/store/auth'
 import { useChatStore } from '@/stores/chat'
-import { getLast, getHistory, type HistoryRow } from '@/features/room/api/lottery'
-import { odds,placeBet } from '@/features/bet/api'
-
+import { getLast, getHistory } from '@/features/room/api/lottery'
+import { odds, placeBet } from '@/features/bet/api'
 import dingMp3 from '@/assets/mp3/ding.mp3'
 import { message } from '@/shared/composables/useGlobalMessage'
 
+/** ========= 中国时区解析/格式化（与设备无关） ========= */
+const TZ_CN = 'Asia/Shanghai'
+function parseCNTimeToMs(str?: string): number {
+  if (!str) return Date.now()
+  const iso = str.trim().replace(' ', 'T') + '+08:00' // "YYYY-MM-DD HH:mm:ss" → ISO+8
+  const t = Date.parse(iso)
+  return Number.isNaN(t) ? Date.now() : t
+}
+function formatCN(input: string | number | Date): string {
+  const ms = typeof input === 'string'
+    ? parseCNTimeToMs(input)
+    : input instanceof Date
+      ? input.getTime()
+      : input
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: TZ_CN,
+    month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).format(ms).replace(/\//g, '-')
+}
+
+/** ========= 封盘时间配置（支持 s / ms / 纯数字，≤600 当秒处理） ========= */
+function normalizeSealMs(v: any): number {
+  if (v == null || v === '') return 30_000
+  const s = String(v).trim().toLowerCase()
+  if (s.endsWith('ms')) return Math.max(0, Number(s.slice(0, -2)) || 30_000)
+  if (s.endsWith('s'))  return Math.max(0, Number(s.slice(0, -1)) * 1000 || 30_000)
+  const n = Number(s)
+  return Number.isFinite(n) ? (n <= 600 ? n * 1000 : n) : 30_000
+}
 
 /* 展开/收起历史 */
 const showHistory = ref(false)
-
 const showDrawer = ref(false)
 
+/* 赔率（桌投后续使用） */
 const oddsList = ref<any[]>([])
-
 async function fetchOdds() {
   try {
-    // ✅ odds() 已经返回数组，不需要解包
     const list = await odds('jnd28')
     oddsList.value = list
       .filter((o: any) => o.status === 1)
-      .map((o: any) => ({
-        play: o.name,   // name 作为唯一 key
-        name: o.name,
-        odds: o.odds,
-      }))
+      .map((o: any) => ({ play: o.name, name: o.name, odds: o.odds }))
   } catch (e) {
     console.warn('fetchOdds error', e)
   }
 }
 
-/* 历史记录 */
-const history = ref<HistoryRow[]>([])
+/* 历史记录：归一化到页面结构 */
+type HistoryView = { issue: number; a: number; b: number; c: number; sum: number; label: string; time: string }
+const history = ref<HistoryView[]>([])
+function composeLabel(sum: number) { return `${sum >= 14 ? '大' : '小'}${sum % 2 === 0 ? '双' : '单'}` }
+
+function normalizeHistory(raw: any[]): HistoryView[] {
+  return (raw || [])
+    .map((x: any) => {
+      const issue = Number(x.issue_code ?? x.issue ?? x.issueCode ?? x.period ?? 0)
+      const a = Number(x.n1 ?? x.a ?? 0)
+      const b = Number(x.n2 ?? x.b ?? 0)
+      const c = Number(x.n3 ?? x.c ?? 0)
+      const sum = Number(x.sum_value ?? x.sum ?? (a + b + c))
+      const openTime = x.open_time ?? x.time ?? x.openTime ?? x.openAt
+      return { issue, a, b, c, sum, label: composeLabel(sum), time: openTime ? formatCN(String(openTime)) : '' }
+    })
+    .filter(v => !!v.issue)
+    .sort((p, q) => q.issue - p.issue)
+}
+
 function goIssue(issue: number) { Toast.info(`期号 ${issue}（待接入）`) }
 function onMoreHistory() { message.info('功能开发中，敬请期待') }
-function composeLabel(sum: number) { return `${sum >= 14 ? '大' : '小'}${sum % 2 === 0 ? '双' : '单'}` }
+
+async function fetchHistoryOnce() {
+  try {
+    const res: any = await getHistory(CODE, 20)
+    const list = Array.isArray(res) ? res : Array.isArray(res?.list) ? res.list : []
+    history.value = normalizeHistory(list)
+  } catch (e) {
+    console.warn('getHistory failed', e)
+    history.value = []
+  }
+}
+
 function upsertHistory(issueNum: number, a: number, b: number, c: number, sum: number, timeText?: string) {
-  const t = timeText || new Date().toLocaleString()
+  if (!issueNum) return
   if (history.value.some(x => x.issue === issueNum)) return
-  history.value.unshift({ issue: issueNum, a, b, c, sum, label: composeLabel(sum), time: t })
+  history.value.unshift({ issue: issueNum, a, b, c, sum, label: composeLabel(sum), time: timeText || formatCN(Date.now()) })
   if (history.value.length > 50) history.value.length = 50
 }
-
-function formatTime(time: string | Date) {
-  const d = typeof time === 'string' ? new Date(time) : time
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mi = String(d.getMinutes()).padStart(2, '0')
-  const ss = String(d.getSeconds()).padStart(2, '0')
-  return `${mm}-${dd} ${hh}:${mi}:${ss}`
-}
-
 
 /* 顶部返回 */
 const router = useRouter()
@@ -172,10 +214,10 @@ const onlineCount = ref(1556)
 const auth = useAuthStore()
 const balance = computed(() => Number(auth.profile?.balance ?? 0))
 
-/* 开奖采集 */
+/* 开奖采集（标准封盘逻辑） */
 const CODE = 'jnd28'
 const PERIOD_MS = 210_000
-const SEAL_MS = 1_000
+const SEAL_MS = normalizeSealMs(import.meta.env.VITE_SEAL_LEAD_MS)  // ✅ 这里自动识别单位
 
 const lastIssue = ref<number | null>(null)
 const lastA = ref(0); const lastB = ref(0); const lastC = ref(0)
@@ -187,14 +229,18 @@ const lastAnnouncedIssue = ref<number | null>(null)
 
 const currentIssue = computed(() => (lastIssue.value ?? 0) + 1)
 
-const nextOpenAt = ref<number>(0)
-const timeLeft = ref<number>(0)
+const nextOpenAt = ref<number>(0)                                   // 下一次“开奖”的绝对时间戳
+const sealAt = computed(() => nextOpenAt.value - SEAL_MS)           // 封盘时刻（绝对时间戳）
+const nowMs = ref(Date.now())                                       // 响应式“当前时间”
+const timeLeft = computed(() => sealAt.value - nowMs.value)         // 距封盘剩余毫秒（可为负）
 
-const status = computed<'open'|'sealed'>(() => {
+// ✅ 状态只看响应式 timeLeft，时间到自动封盘
+const status = computed<'open' | 'sealed'>(() => {
   if (!hasLatestResult.value) return 'sealed'
-  return timeLeft.value <= SEAL_MS ? 'sealed' : 'open'
+  return timeLeft.value <= 0 ? 'sealed' : 'open'
 })
 
+// 展示“距封盘”的倒计时（天然少 SEAL_MS）
 const mmss = computed(() => {
   const t = Math.max(0, timeLeft.value)
   const m = Math.floor(t / 60000)
@@ -219,17 +265,15 @@ function unlockAudio() {
 function playDing() {
   const el = dingEl.value
   if (!el) return
-  try {
-    el.pause()
-    el.currentTime = 0
-  } catch {}
+  try { el.pause(); el.currentTime = 0 } catch {}
   el.play().catch(() => {})
 }
 
-/* 拉取最新 */
+/* 拉取最新（严格按中国时区解析 open_time；不滚动未来周期） */
 async function fetchLatest() {
   try {
     const data: any = await getLast(CODE)
+
     const prevIssue = lastIssue.value
     const prevA = lastA.value, prevB = lastB.value, prevC = lastC.value
     const prevSum = prevA + prevB + prevC
@@ -245,21 +289,37 @@ async function fetchLatest() {
     const sum = Number(data.sum_value ?? (ballA + ballB + ballC))
     lastLabel.value = composeLabel(sum)
 
-    if (!hasLatestResult.value && issueNum > 0) {
-      hasLatestResult.value = true
-    }
+    if (!hasLatestResult.value && issueNum > 0) hasLatestResult.value = true
 
-    const refMs = data.open_time ? new Date(data.open_time).getTime() : Date.now()
+    // 基准时间：这条“已确认结果”的开奖时间（按中国时区解析）
+    const refMs = data.open_time ? parseCNTimeToMs(data.open_time) : Date.now()
+
     const isFirstBaseline = !prevIssue && issueNum > 0
     const isNewIssue = !!prevIssue && issueNum !== prevIssue
+
     if (isFirstBaseline || isNewIssue) {
+      // 只推进到“下一次计划开奖”，不因 now 已越界而滚动更远周期
       nextOpenAt.value = refMs + PERIOD_MS
-      tick()
+
+      // 立刻同步一次 nowMs，驱动所有 computed 刷新
+      nowMs.value = Date.now()
+
+      // —— 调试输出（需要时看控制台）——
+      console.debug('[lottery] issue=', issueNum,
+        'SEAL_MS=', SEAL_MS,
+        'refMs(open_time)=', new Date(refMs).toISOString(),
+        'nextOpenAt=', new Date(nextOpenAt.value).toISOString(),
+        'sealAt=', new Date(sealAt.value).toISOString(),
+        'timeLeft(ms)=', timeLeft.value,
+      )
+
       if (issueNum && lastAnnouncedIssue.value !== issueNum) {
         announceLatest(issueNum, ballA, ballB, ballC, sum, lastLabel.value)
       }
       if (isNewIssue && prevIssue) {
-        upsertHistory(prevIssue, prevA, prevB, prevC, prevSum, formatTime(data.open_time))
+        // 上一期显示时间 = 当前结果 open_time - PERIOD
+        const prevOpenMs = refMs - PERIOD_MS
+        upsertHistory(prevIssue, prevA, prevB, prevC, prevSum, formatCN(prevOpenMs))
       }
       quickText.value = ''
     }
@@ -286,7 +346,10 @@ function announceLatest(issue: number, a: number, b: number, c: number, sum: num
 
 /* 定时器 */
 let tickTimer: number | undefined
-function tick() { timeLeft.value = Math.max(0, nextOpenAt.value - Date.now()) }
+function tick() {
+  // 只更新“当前时间”，其余都由 computed 链自动刷新
+  nowMs.value = Date.now()
+}
 function startTick() { stopTick(); tickTimer = window.setInterval(tick, 1000) as unknown as number }
 function stopTick() { if (tickTimer) { clearInterval(tickTimer); tickTimer = undefined } }
 
@@ -294,7 +357,10 @@ let pollTimer: number | undefined
 function startPoll() { stopPoll(); pollTimer = window.setInterval(fetchLatest, 3_000) as unknown as number }
 function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = undefined } }
 
-watch(timeLeft, (v) => { if (v === 0 && hasLatestResult.value) setTimeout(fetchLatest, 1200) })
+// 倒计时 <= 0（封盘中），缓冲 1.2s 再拉一次最新；结果未到 → 维持封盘
+watch(timeLeft, (v) => {
+  if (v <= 0 && hasLatestResult.value) setTimeout(fetchLatest, 1200)
+})
 
 /* 聊天 */
 const chat = useChatStore()
@@ -313,95 +379,47 @@ function loadMore() {
   chat.prepend(more as any)
 }
 
-
 // 发送输入框内容（支持快投）
 async function sendChat() {
   const raw = text.value.trim()
   if (!raw) return
-
-  // 封盘直接拦截
-  if (status.value === 'sealed') {
-    message.info('封盘中禁止下注')
-    return
-  }
+  if (status.value === 'sealed') { message.info('封盘中禁止下注'); return }
 
   let itemsParsed: QuickBetItem[] = []
   try {
     itemsParsed = parseQuickBet(raw) as QuickBetItem[]
   } catch (e: any) {
     const msg = e?.message as string | undefined
-    if (msg) {
-      message.info(msg) // 例如：投注种类过多 / 格式不正确
-      return
-    }
+    if (msg) { message.info(msg); return }
   }
 
-  // 不是快投 → 走普通聊天
+  // 普通聊天
   if (!itemsParsed.length) {
-    chat.push({
-      id: String(Date.now()),
-      type: 'user',
-      nick: userNick.value,
-      content: raw,
-      ts: Date.now(),
-      self: true,
-    } as any)
+    chat.push({ id: String(Date.now()), type: 'user', nick: userNick.value, content: raw, ts: Date.now(), self: true } as any)
     text.value = ''
     return
   }
 
-  // 登录校验
-  if (!isAuthed.value) {
-    message.info('游客模式不可下单')
-    return
-  }
-
-  // 余额友好挡板（后端仍会校验）
+  // 登录 & 余额挡板
+  if (!isAuthed.value) { message.info('游客模式不可下单'); return }
   const total = itemsParsed.reduce((s, it) => s + Number(it.amount || 0), 0)
-  if (Number(balance.value) < total) {
-    message.info('余额不足')
-    return
-  }
+  if (Number(balance.value) < total) { message.info('余额不足'); return }
 
-  // —— 下单 ——（对齐后端：items[{ play, amount }]）
   try {
     await placeBet({
       code: CODE,
-      issue: String(currentIssue.value),
-      items: itemsParsed.map(it => ({
-        play: it.play,                  // ★ 用 play
-        amount: Number(it.amount),
-      })),
+      issue: currentIssue.value, // 数字
+      items: itemsParsed.map(it => ({ play: it.play, amount: Number(it.amount) })),
     })
-
     message.info('下注成功')
-    // 回显自己发的这条（非必须，仅做可视反馈）
     const line = itemsParsed.slice(0, 10).map(b => `${b.play}${b.amount}`).join(' ')
-    chat.push({
-      id: String(Date.now()),
-      type: 'user',
-      nick: userNick.value,
-      content: line,
-      ts: Date.now(),
-      self: true,
-    } as any)
-
+    chat.push({ id: String(Date.now()), type: 'user', nick: userNick.value, content: line, ts: Date.now(), self: true } as any)
     text.value = ''
-
-    // 可选：刷新余额（如果有方法）
-    // await auth.reload?.()
-
-    // 可选：本地系统消息；正式提示由 GM 广播，这里默认不发
-    // chat.push({ id: String(Date.now()), type: 'system', content: `订单已提交：共${total}`, ts: Date.now() } as any)
   } catch (e: any) {
     const msg = e?.response?.data?.detail || e?.message || '下单失败'
     message.info(msg)
   }
 }
-
-
-
-
 
 /* 快投 */
 const quickText = ref('')
@@ -434,11 +452,9 @@ function removeUnlockListeners() {
   window.removeEventListener('click', unlockAudio)
   window.removeEventListener('touchstart', unlockAudio)
 }
-async function fetchHistoryOnce() {
-  history.value = await getHistory(CODE, 20)
-}
 
 onMounted(() => {
+  console.debug('[lottery] SEAL_MS(normalized)=', SEAL_MS)
   fetchOdds()
   fetchLatest()
   fetchHistoryOnce()
@@ -453,7 +469,6 @@ onUnmounted(() => {
 })
 
 /* 顶部操作 */
-function onCredit(){ Toast.info('信用') }
 function onMore(){ Toast.info('更多') }
 </script>
 
@@ -496,6 +511,7 @@ function onMore(){ Toast.info('更多') }
 .history-panel .result .sum{ font-weight:900; }
 .history-panel .result .txt{ font-weight:800; }
 .history-panel .more{ text-align:center; color:#2563eb; padding:10px 12px; border-top:1px solid #eef2f7; display:flex; align-items:center; justify-content:center; gap:6px; cursor:pointer; }
+.history-panel .empty{ padding:12px; color:#9CA3AF; text-align:center; }
 .section-title { margin: 8px 16px 6px; font-weight: 700; color:#111827; }
 .chat-main { flex:1; min-height:0; overflow:hidden; padding: 0 4px; }
 .bottom-bar{ position: fixed; left: 0; right: 0; bottom: 0; height: 56px; background: rgba(255,255,255,.92); backdrop-filter: saturate(140%) blur(6px); border-top: 1px solid #eef2f7; display: grid; grid-template-columns: repeat(4,1fr); z-index: 8; }
