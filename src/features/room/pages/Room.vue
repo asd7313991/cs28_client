@@ -67,7 +67,7 @@
 
     <!-- 聊天区 -->
     <div class="section-title">聊天室</div>
-    <div class="chat-main">
+    <div class="chat-main" style="margin-bottom: 70px;">
       <ChatList :messages="chatMessages" :hasMore="hasMore" :selfNick="userNick" @loadMore="loadMore" />
     </div>
 
@@ -527,4 +527,6 @@ function onMore(){ Toast.info('更多') }
 .history-wrap .result-strip { margin: 0; }
 .history-panel.overlay { position: absolute; left: 0; right: 0; top: calc(100% + 6px); width: 100%; margin: 0; border-radius: 0; border-left: none; border-right: none; z-index: 30; max-height: 50vh; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 :deep(.t-popup) { max-height: 60vh; border-top-left-radius: 12px; border-top-right-radius: 12px; overflow-y: auto; }
+
+
 </style>

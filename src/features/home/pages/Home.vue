@@ -51,7 +51,7 @@
 
 
     <!-- 4) 热门彩种 -->
-    <div class="section">
+    <div class="section ">
       <div class="section-title">热门彩种</div>
       <div
         class="game-card"
